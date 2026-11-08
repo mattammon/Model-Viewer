@@ -1,0 +1,39 @@
+{
+  "models": [
+    "gefs",
+    "gfs",
+    "ifs_ens",
+    "ifs",
+    "aifs_ens",
+    "aifs"
+  ],
+  "fields": [
+    "t2m",
+    "mslp",
+    "u10",
+    "v10",
+    "z500",
+    "t850"
+  ],
+  "members": {
+    "gefs": [
+      0,
+      1
+    ],
+    "ifs_ens": [
+      0,
+      1
+    ],
+    "aifs_ens": [
+      0,
+      1
+    ]
+  },
+  "leads": [
+    24
+  ],
+  "workers": 4,
+  "lookback_hours": 48,
+  "poll_seconds": 900,
+  "retain_cycles": 4
+}

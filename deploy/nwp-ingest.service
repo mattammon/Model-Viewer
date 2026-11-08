@@ -1,0 +1,17 @@
+[Unit]
+Description=Model Viewer forecast ingestion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=modelviewer
+WorkingDirectory=/opt/model-viewer
+ExecStart=/opt/model-viewer/.venv/bin/python -m nwp_ingest --config /opt/model-viewer/config/starter.json --data-root /var/lib/model-viewer watch
+Restart=on-failure
+RestartSec=30
+StateDirectory=model-viewer
+UMask=0022
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,91 @@
+{
+  "verified_date": "2026-10-29",
+  "completed_cycle": "20261029T00Z",
+  "forecast_lead_hours": 24,
+  "ensemble_members_per_test": [
+    0,
+    1
+  ],
+  "all_nominal_members_tested": false,
+  "products": [
+    {
+      "model": "aifs",
+      "cycle": "20261029T00Z",
+      "lead": 24,
+      "shape": [
+        721,
+        1440
+      ],
+      "fields": 7,
+      "min_t2m_K": 223.05079650878906,
+      "max_t2m_K": 307.55078125
+    },
+    {
+      "model": "aifs_ens",
+      "cycle": "20261029T00Z",
+      "lead": 24,
+      "shape": [
+        721,
+        1440
+      ],
+      "fields": 42,
+      "min_t2m_K": 222.1042022705078,
+      "max_t2m_K": 307.60418701171875
+    },
+    {
+      "model": "gefs",
+      "cycle": "20261029T00Z",
+      "lead": 24,
+      "shape": [
+        361,
+        720
+      ],
+      "fields": 42,
+      "min_t2m_K": 224.86460876464844,
+      "max_t2m_K": 310.17962646484375
+    },
+    {
+      "model": "gfs",
+      "cycle": "20261029T00Z",
+      "lead": 24,
+      "shape": [
+        721,
+        1440
+      ],
+      "fields": 7,
+      "min_t2m_K": 219.1813507080078,
+      "max_t2m_K": 309.2613525390625
+    },
+    {
+      "model": "ifs",
+      "cycle": "20261029T00Z",
+      "lead": 24,
+      "shape": [
+        721,
+        1440
+      ],
+      "fields": 7,
+      "min_t2m_K": 223.64662170410156,
+      "max_t2m_K": 308.1466064453125
+    },
+    {
+      "model": "ifs_ens",
+      "cycle": "20261029T00Z",
+      "lead": 24,
+      "shape": [
+        721,
+        1440
+      ],
+      "fields": 42,
+      "min_t2m_K": 223.5589599609375,
+      "max_t2m_K": 307.8089599609375
+    }
+  ],
+  "cache_repeat": {
+    "cached": 9,
+    "downloaded": 0,
+    "pending": 0,
+    "failed": 0
+  },
+  "unit_tests_passed": 21
+}

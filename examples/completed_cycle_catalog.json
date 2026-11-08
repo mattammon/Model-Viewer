@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-29T19:38:50.757142+00:00",
+  "selection_id": "7a1fbfa06fac",
+  "fields": {
+    "t2m": "K",
+    "mslp": "Pa",
+    "u10": "m s-1",
+    "v10": "m s-1",
+    "z500": "m",
+    "t850": "K"
+  },
+  "models": [
+    {
+      "id": "gefs",
+      "label": "GEFS",
+      "ensemble": true,
+      "resolution": "0p50",
+      "latest_started": "20261029T00Z",
+      "latest_complete": "20261029T00Z",
+      "runs": [
+        {
+          "model": "gefs",
+          "cycle": "20261029T00Z",
+          "expected": 2,
+          "complete": 2,
+          "pending": 0,
+          "failed": 0,
+          "bytes": 2667060,
+          "leads": [
+            24
+          ],
+          "complete_leads": [
+            24
+          ],
+          "errors": [],
+          "download_complete": true,
+          "compiled_leads": [
+            24
+          ],
+          "status": "complete"
+        }
+      ],
+      "latest_downloaded": "20261029T00Z"
+    },
+    {
+      "id": "gfs",
+      "label": "GFS deterministic",
+      "ensemble": false,
+      "resolution": "0p25",
+      "latest_started": "20261029T00Z",
+      "latest_complete": "20261029T00Z",
+      "runs": [
+        {
+          "model": "gfs",
+          "cycle": "20261029T00Z",
+          "expected": 1,
+          "complete": 1,
+          "pending": 0,
+          "failed": 0,
+          "bytes": 5440270,
+          "leads": [
+            24
+          ],
+          "complete_leads": [
+            24
+          ],
+          "errors": [],
+          "download_complete": true,
+          "compiled_leads": [
+            24
+          ],
+          "status": "complete"
+        }
+      ],
+      "latest_downloaded": "20261029T00Z"
+    },
+    {
+      "id": "ifs_ens",
+      "label": "ECMWF IFS ENS",
+      "ensemble": true,
+      "resolution": "0p25",
+      "latest_started": "20261029T00Z",
+      "latest_complete": "20261029T00Z",
+      "runs": [
+        {
+          "model": "ifs_ens",
+          "cycle": "20261029T00Z",
+          "expected": 2,
+          "complete": 2,
+          "pending": 0,
+          "failed": 0,
+          "bytes": 5438337,
+          "leads": [
+            24
+          ],
+          "complete_leads": [
+            24
+          ],
+          "errors": [],
+          "download_complete": true,
+          "compiled_leads": [
+            24
+          ],
+          "status": "complete"
+        }
+      ],
+      "latest_downloaded": "20261029T00Z"
+    },
+    {
+      "id": "ifs",
+      "label": "ECMWF IFS deterministic",
+      "ensemble": false,
+      "resolution": "0p25",
+      "latest_started": "20261029T00Z",
+      "latest_complete": "20261029T00Z",
+      "runs": [
+        {
+          "model": "ifs",
+          "cycle": "20261029T00Z",
+          "expected": 1,
+          "complete": 1,
+          "pending": 0,
+          "failed": 0,
+          "bytes": 2700682,
+          "leads": [
+            24
+          ],
+          "complete_leads": [
+            24
+          ],
+          "errors": [],
+          "download_complete": true,
+          "compiled_leads": [
+            24
+          ],
+          "status": "complete"
+        }
+      ],
+      "latest_downloaded": "20261029T00Z"
+    },
+    {
+      "id": "aifs_ens",
+      "label": "ECMWF AIFS ENS",
+      "ensemble": true,
+      "resolution": "0p25",
+      "latest_started": "20261029T00Z",
+      "latest_complete": "20261029T00Z",
+      "runs": [
+        {
+          "model": "aifs_ens",
+          "cycle": "20261029T00Z",
+          "expected": 2,
+          "complete": 2,
+          "pending": 0,
+          "failed": 0,
+          "bytes": 6656964,
+          "leads": [
+            24
+          ],
+          "complete_leads": [
+            24
+          ],
+          "errors": [],
+          "download_complete": true,
+          "compiled_leads": [
+            24
+          ],
+          "status": "complete"
+        }
+      ],
+      "latest_downloaded": "20261029T00Z"
+    },
+    {
+      "id": "aifs",
+      "label": "ECMWF AIFS Single",
+      "ensemble": false,
+      "resolution": "0p25",
+      "latest_started": "20261029T00Z",
+      "latest_complete": "20261029T00Z",
+      "runs": [
+        {
+          "model": "aifs",
+          "cycle": "20261029T00Z",
+          "expected": 1,
+          "complete": 1,
+          "pending": 0,
+          "failed": 0,
+          "bytes": 2492663,
+          "leads": [
+            24
+          ],
+          "complete_leads": [
+            24
+          ],
+          "errors": [],
+          "download_complete": true,
+          "compiled_leads": [
+            24
+          ],
+          "status": "complete"
+        }
+      ],
+      "latest_downloaded": "20261029T00Z"
+    }
+  ],
+  "attribution": "ECMWF open data: CC BY 4.0. Contains modified Copernicus/ECMWF information where applicable. NOAA/NCEP forecasts."
+}

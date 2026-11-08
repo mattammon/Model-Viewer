@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "model-viewer-ingest"
+version = "0.1.0"
+description = "Resumable global NWP ingestion and ensemble compilation"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+processing = ["numpy>=1.26,<3", "eccodes>=2.38,<3"]
+
+[project.scripts]
+nwp = "nwp_ingest.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nwp_ingest*"]
+
+[tool.setuptools.package-data]
+nwp_ingest = ["dashboard.html"]

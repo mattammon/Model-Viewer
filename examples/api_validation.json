@@ -1,0 +1,75 @@
+{
+  "health": {
+    "status": "ok",
+    "catalog_age_seconds": 0.011441
+  },
+  "catalog": {
+    "models": 6,
+    "ready": true
+  },
+  "point": {
+    "metadata": {
+      "fingerprint": {
+        "members": [
+          0,
+          1
+        ],
+        "raw_sha256": [
+          "0d635dabfdda03523307b9278763dd8434f0a6c3c1367205e7b5b9969e7bc3e8",
+          "8a718fcd33db953fe4407b6e743819ea64e65a0a6527d580bda1293136064706"
+        ],
+        "fields": [
+          "t2m",
+          "mslp",
+          "u10",
+          "v10",
+          "z500",
+          "t850"
+        ],
+        "version": 1
+      },
+      "model": "ifs_ens",
+      "cycle": "20261029T00Z",
+      "lead": 24,
+      "valid_time": "2026-10-30T00:00:00+00:00",
+      "ensemble": true,
+      "members": [
+        0,
+        1
+      ],
+      "nominal_ensemble_size": 51,
+      "full_ensemble": false,
+      "spread_ddof": 0,
+      "quantile_method": "linear",
+      "ws10_method": "speed calculated per member before statistics",
+      "units": {
+        "t2m": "K",
+        "mslp": "Pa",
+        "u10": "m s-1",
+        "v10": "m s-1",
+        "z500": "m",
+        "t850": "K",
+        "ws10": "m s-1"
+      },
+      "sha256": "80a465ef63b5956f8e6955b7479d2da162f873c3c266144e208e12f7b890587e"
+    },
+    "field": "ws10",
+    "statistic": "p90",
+    "latitude": 35.25,
+    "longitude": -97.5,
+    "value": 3.1904830932617188
+  },
+  "field": {
+    "shape": [
+      37,
+      72
+    ],
+    "field": "t2m",
+    "statistic": "mean"
+  },
+  "dashboard": {
+    "http_status": 200,
+    "html_bytes": 4552,
+    "title_present": true
+  }
+}
