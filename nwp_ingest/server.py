@@ -1,10 +1,18 @@
-"""Local status UI and bounded JSON API for the future map viewer."""
+"""Local forecast viewer, status dashboard, and bounded JSON API."""
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from .models import MODELS, FIELDS, parse_cycle
+from .models import MODELS, FIELDS, parse_cycle, selected_members
+
+VIEWER_ASSETS = {
+    "/": ("index.html", "text/html"),
+    "/viewer/app.css": ("app.css", "text/css"),
+    "/viewer/app.js": ("app.js", "text/javascript"),
+    "/viewer/map.js": ("map.js", "text/javascript"),
+    "/viewer/boundaries.json": ("boundaries.json", "application/json"),
+}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -27,7 +35,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlsplit(self.path)
         try:
-            if url.path == "/":
+            if url.path in VIEWER_ASSETS:
+                name, mime = VIEWER_ASSETS[url.path]
+                self.send((Path(__file__).with_name("viewer") / name).read_bytes(), mime=mime)
+            elif url.path == "/status":
                 self.send(Path(__file__).with_name("dashboard.html").read_bytes(), mime="text/html")
             elif url.path in ("/api/catalog", "/health"):
                 path = self.pipeline.root / "catalog.json"
@@ -42,6 +53,11 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     last = self.pipeline.root / "last_sync.json"
                     data["last_sync"] = json.loads(last.read_text()) if last.exists() else None
+                    for model in data["models"]:
+                        model["configured_members"] = selected_members(self.pipeline.config, MODELS[model["id"]])
+                        model["ensemble_size"] = MODELS[model["id"]].size
+                    if {"u10", "v10"} <= data["fields"].keys():
+                        data["fields"]["ws10"] = "m s-1"
                     self.json(data)
             elif url.path in ("/api/field", "/api/point"):
                 self.field(url.path, parse_qs(url.query))
@@ -66,7 +82,7 @@ class Handler(BaseHTTPRequestHandler):
         name, cycle = arg("model"), arg("cycle")
         if name not in MODELS:
             raise ValueError("Unknown model")
-        parse_cycle(cycle)
+        cycle = parse_cycle(cycle).strftime("%Y%m%dT%HZ")
         lead = int(arg("lead"))
         if not 0 <= lead <= 384:
             raise ValueError("lead must be in 0..384")
@@ -75,9 +91,19 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Unknown field")
         if stat not in ("mean", "spread", "p10", "p50", "p90", "member_count"):
             raise ValueError("Unknown statistic")
-        path = self.pipeline.root / "compiled" / name / cycle / f"f{lead:03d}.npz"
+        member = query.get("member", [None])[0]
+        statistic = stat if MODELS[name].ensemble else "deterministic"
+        if member is None:
+            path = self.pipeline.root / "compiled" / name / cycle / f"f{lead:03d}.npz"
+            key = f"{field}__{stat}" if MODELS[name].ensemble else field
+        else:
+            member = int(member)
+            if not MODELS[name].ensemble or member not in selected_members(self.pipeline.config, MODELS[name]):
+                raise ValueError("Ensemble member is outside the configured selection")
+            path = self.pipeline.root / "normalized" / name / cycle / f"f{lead:03d}" / f"m{member:02d}.npz"
+            key = field
+            statistic = "member"
         metadata = json.loads(path.with_suffix(".json").read_text())
-        key = f"{field}__{stat}" if MODELS[name].ensemble else field
         with np.load(path) as data:
             lat, lon, values = data["latitude"], data["longitude"], data[key]
             if endpoint == "/api/point":
@@ -88,14 +114,14 @@ class Handler(BaseHTTPRequestHandler):
                 i = int(np.abs(lat - latitude).argmin())
                 j = int(np.abs((lon - longitude + 180) % 360 - 180).argmin())
                 number = float(values[i, j])
-                self.json({"metadata": metadata, "field": field, "statistic": stat if MODELS[name].ensemble else "deterministic",
+                self.json({"metadata": metadata, "field": field, "statistic": statistic,
                            "latitude": float(lat[i]), "longitude": float(lon[j]), "value": number if np.isfinite(number) else None})
             else:
                 width = min(720, max(36, int(arg("width", "360"))))
                 stride = max(1, int(np.ceil(len(lon) / width)))
                 arr = values[::stride, ::stride]
                 safe = np.where(np.isfinite(arr), arr, None).tolist()
-                self.json({"metadata": metadata, "field": field, "statistic": stat if MODELS[name].ensemble else "deterministic",
+                self.json({"metadata": metadata, "field": field, "statistic": statistic,
                            "latitude": lat[::stride].tolist(), "longitude": lon[::stride].tolist(), "values": safe,
                            "sampling": "nearest gridpoint decimation; native model grid retained on disk"})
 

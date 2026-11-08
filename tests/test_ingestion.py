@@ -192,11 +192,14 @@ class APITests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.temp.cleanup)
         config_path = Path(cls.temp.name) / "config.json"
-        config_path.write_text(json.dumps({"models": ["gfs"], "fields": ["t2m"], "leads": [24]}))
+        config_path.write_text(json.dumps({"models": ["gfs", "gefs"], "fields": ["t2m"], "leads": [24], "members": {"gefs": [0, 1]}}))
         cls.pipeline = Pipeline(load_config(config_path), cls.temp.name)
         path = cls.pipeline.root / "compiled/gfs/20261029T00Z/f024.npz"
         atomic_npz(path, {"latitude": np.array([-90, 0, 90]), "longitude": np.array([-180, -90, 0, 90]), "t2m": np.array([[1.,2,3,4], [5,6,np.nan,8], [9,10,11,12]])})
         atomic_json(path.with_suffix(".json"), {"model": "gfs", "cycle": "20261029T00Z", "lead": 24})
+        member_path = cls.pipeline.root / "normalized/gefs/20261029T00Z/f024/m01.npz"
+        atomic_npz(member_path, {"latitude": np.array([-90, 0, 90]), "longitude": np.array([-180, -90, 0, 90]), "t2m": np.full((3, 4), 283.5)})
+        atomic_json(member_path.with_suffix(".json"), {"model": "gefs", "member": 1})
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Handler, pipeline=cls.pipeline))
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -228,6 +231,15 @@ class APITests(unittest.TestCase):
         with self.assertRaises(HTTPError) as error:
             self.get("/api/point?model=../gfs&cycle=20261029T00Z&lead=24&lat=0&lon=0")
         self.assertEqual(error.exception.code, 400)
+
+    def test_member_request_reads_the_selected_normalized_grid(self):
+        query = "model=gefs&cycle=20261029T00Z&lead=24&field=t2m&member=1"
+        grid = self.get("/api/field?" + query)
+        point = self.get("/api/point?" + query + "&lat=0&lon=0")
+        self.assertEqual(grid["statistic"], "member")
+        self.assertEqual(grid["metadata"]["member"], 1)
+        self.assertEqual(point["value"], grid["values"][1][2])
+        self.assertEqual(point["value"], 283.5)
 
 
 class StatisticsTests(unittest.TestCase):

@@ -1,0 +1,379 @@
+import { ForecastMap } from "./map.js";
+
+const FIELDS = {
+  t2m: {label: "2 m temperature", unit: "°C", ticks: [-60, -40, -20, 0, 20, 40], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
+  t850: {label: "850 hPa temperature", unit: "°C", ticks: [-45, -30, -15, 0, 15, 30], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
+  mslp: {label: "Mean sea-level pressure", unit: "hPa", ticks: [960, 980, 1000, 1020, 1040], convert: value => value / 100, spread: 20, colors: ["#63308f", "#4366ab", "#6dbac8", "#c9d9ae", "#e4c368", "#ce7b42", "#a34a48"]},
+  ws10: {label: "10 m wind speed", unit: "m/s", ticks: [0, 6, 12, 18, 24, 30], spread: 12, colors: ["#26354e", "#355a84", "#388c9e", "#5cbd8a", "#d1cc63", "#f0a348", "#d75350", "#974068"]},
+  u10: {label: "10 m zonal wind", unit: "m/s", ticks: [-30, -20, -10, 0, 10, 20, 30], spread: 12, colors: ["#3b2d83", "#4775b6", "#75b9cd", "#d0e0da", "#e3be72", "#d77b49", "#9d4152"]},
+  v10: {label: "10 m meridional wind", unit: "m/s", ticks: [-30, -20, -10, 0, 10, 20, 30], spread: 12, colors: ["#3b2d83", "#4775b6", "#75b9cd", "#d0e0da", "#e3be72", "#d77b49", "#9d4152"]},
+  z500: {label: "500 hPa geopotential height", unit: "m", ticks: [4800, 5100, 5400, 5700, 6000], spread: 180, colors: ["#4f317e", "#3d5ca9", "#5ca0c8", "#82bca9", "#bcd478", "#d9c264", "#d97b44", "#9e3e51"]},
+};
+
+const PRODUCTS = {
+  mean: "Ensemble mean",
+  spread: "Ensemble spread",
+  p10: "10th percentile",
+  p50: "50th percentile",
+  p90: "90th percentile",
+};
+const $ = id => document.getElementById(id);
+const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "global"};
+const frames = new Map();
+let fieldRequest, pointRequest, catalogRequest;
+let playing = false;
+let playToken = 0;
+let playTimer;
+const map = new ForecastMap($("map"), selectPoint, () => { $("map-tag").textContent = "CUSTOM VIEW"; });
+
+async function getJSON(path, signal) {
+  const response = await fetch(path, {signal, cache: "no-store"});
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Request failed");
+  return body;
+}
+
+function setOptions(select, options, current) {
+  select.replaceChildren(...options.map(([value, label]) => new Option(label, value)));
+  if (options.some(([value]) => String(value) === String(current))) select.value = current;
+  select.disabled = options.length < 2;
+}
+
+function cycleDate(cycle) {
+  return new Date(cycle.slice(0, 4) + "-" + cycle.slice(4, 6) + "-" + cycle.slice(6, 8) + "T" + cycle.slice(9, 11) + ":00:00Z");
+}
+
+const utcDate = new Intl.DateTimeFormat("en-GB", {timeZone: "UTC", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
+function formatTime(date) {
+  return utcDate.format(date).replace(",", " ·") + " UTC";
+}
+
+function leadLabel(lead) {
+  return "F" + String(lead).padStart(3, "0");
+}
+
+function selectedModel() {
+  return state.catalog?.models.find(model => model.id === state.model);
+}
+
+function selectedRun() {
+  return selectedModel()?.runs.find(run => run.cycle === state.run);
+}
+
+function usableLeads() {
+  return selectedRun()?.compiled_leads || [];
+}
+
+function productOptions(model) {
+  if (!model) return [];
+  if (!model.ensemble) return [["deterministic", "Deterministic"]];
+  const options = Object.entries(PRODUCTS);
+  for (const member of model.configured_members || []) {
+    options.push(["member-" + member, member === 0 ? "Control member" : "Member " + String(member).padStart(2, "0")]);
+  }
+  return options;
+}
+
+function selectDefaults(modelChanged = false) {
+  const models = state.catalog?.models || [];
+  if (!selectedModel()) state.model = (models.find(m => m.id === "ifs_ens" && m.runs.some(r => r.compiled_leads.length)) || models.find(m => m.runs.some(r => r.compiled_leads.length)) || models[0])?.id;
+  const model = selectedModel();
+  if (!selectedRun() || modelChanged) {
+    state.run = model?.runs.find(r => r.compiled_leads.length)?.cycle || model?.runs[0]?.cycle;
+  }
+  if (!usableLeads().includes(state.lead)) state.lead = usableLeads()[0] ?? null;
+  if (!productOptions(model).some(([key]) => key === state.product)) state.product = model?.ensemble ? "mean" : "deterministic";
+  if (!state.catalog?.fields?.[state.field]) state.field = Object.keys(state.catalog?.fields || {}).find(key => key in FIELDS) || "t2m";
+}
+
+function scaleFor(field, product) {
+  const def = FIELDS[field];
+  if (product === "spread") {
+    const ticks = [0, .25, .5, .75, 1].map(n => n * def.spread);
+    return {
+      label: def.label + " spread",
+      unit: def.unit === "°C" ? "K" : def.unit,
+      ticks,
+      min: 0,
+      max: def.spread,
+      colors: ["#252f52", "#3c5697", "#4391b1", "#7fc8ab", "#e1c870", "#e5804f"],
+      convert: field === "mslp" ? value => value / 100 : value => value,
+    };
+  }
+  return {...def, min: def.ticks[0], max: def.ticks.at(-1), convert: def.convert || (value => value)};
+}
+
+function requestParams() {
+  const params = new URLSearchParams({model: state.model, cycle: state.run, lead: state.lead, field: state.field});
+  if (state.product.startsWith("member-")) params.set("member", state.product.slice(7));
+  else if (state.product !== "deterministic") params.set("stat", state.product);
+  return params;
+}
+
+function setMessage(message) {
+  $("map-message").textContent = message || "";
+  $("map-message").hidden = !message;
+}
+
+function setCatalogBadge(mode, label) {
+  $("catalog-state").dataset.state = mode;
+  $("catalog-state").querySelector("span").textContent = label;
+}
+
+function drawControls() {
+  const model = selectedModel();
+  const run = selectedRun();
+  setOptions($("model"), (state.catalog?.models || []).map(m => [m.id, m.label]), state.model);
+  setOptions($("cycle"), (model?.runs || []).map(r => [r.cycle, formatTime(cycleDate(r.cycle)) + (r.status === "partial" ? " · partial" : "")]), state.run);
+  setOptions($("field"), Object.keys(state.catalog?.fields || {}).filter(key => key in FIELDS).map(key => [key, FIELDS[key].label]), state.field);
+  setOptions($("product"), productOptions(model), state.product);
+  const parts = [];
+  if (model) parts.push(model.resolution.replace("p", ".") + "° source grid");
+  if (model?.ensemble) parts.push(model.configured_members.length + " / " + model.ensemble_size + " members configured");
+  if (run) parts.push(run.compiled_leads.length + " / " + run.leads.length + " leads compiled");
+  $("coverage").textContent = parts.join(" · ") || "Waiting for the forecast catalog.";
+}
+
+function drawTimeline() {
+  const run = selectedRun();
+  const leads = usableLeads();
+  const strip = $("leads");
+  const planned = run?.leads || [];
+  // Keep the timeline buttons in place on lead changes so keyboard focus stays put.
+  const layout = planned.map(lead => lead + ":" + leads.includes(lead)).join(",");
+  if (strip.dataset.layout !== layout) {
+    strip.replaceChildren(...planned.map(lead => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.lead = lead;
+      button.textContent = leadLabel(lead);
+      button.disabled = !leads.includes(lead);
+      button.title = button.disabled ? "Lead pending compilation" : "Forecast hour " + lead;
+      button.addEventListener("click", () => changeLead(lead));
+      return button;
+    }));
+    strip.dataset.layout = layout;
+  }
+  for (const button of strip.children) button.setAttribute("aria-pressed", String(Number(button.dataset.lead) === state.lead));
+  const active = strip.querySelector('[aria-pressed="true"]');
+  if (active) {
+    if (active.offsetLeft < strip.offsetLeft + strip.scrollLeft) strip.scrollLeft = active.offsetLeft - strip.offsetLeft;
+    else if (active.offsetLeft + active.offsetWidth > strip.offsetLeft + strip.scrollLeft + strip.clientWidth) strip.scrollLeft = active.offsetLeft - strip.offsetLeft + active.offsetWidth - strip.clientWidth + 4;
+  }
+  $("timeline-info").textContent = run ? leads.length + " of " + planned.length + " leads available" : "Waiting for compiled leads";
+  $("play").disabled = leads.length < 2;
+  $("prev-lead").disabled = leads.indexOf(state.lead) < 1;
+  $("next-lead").disabled = leads.indexOf(state.lead) >= leads.length - 1;
+}
+
+function drawHeader() {
+  const model = selectedModel();
+  const product = productOptions(model).find(([key]) => key === state.product)?.[1];
+  const scale = scaleFor(state.field, state.product);
+  $("map-title").textContent = scale.label;
+  $("map-model").textContent = model ? model.label + " / " + product : "FORECAST MAP";
+  $("legend-title").textContent = scale.label + " · " + scale.unit;
+  $("legend-bar").style.background = "linear-gradient(90deg, " + scale.colors.join(", ") + ")";
+  $("legend-ticks").replaceChildren(...scale.ticks.map(value => {
+    const span = document.createElement("span");
+    span.textContent = Number(value.toFixed(1));
+    return span;
+  }));
+  $("valid-time").textContent = state.run && state.lead !== null ? formatTime(new Date(cycleDate(state.run).getTime() + state.lead * 3600000)) : "—";
+  $("map-details").textContent = state.lead !== null ? leadLabel(state.lead) + " · latitude / longitude" : "";
+}
+
+async function drawField() {
+  fieldRequest?.abort();
+  const controller = new AbortController();
+  fieldRequest = controller;
+  drawHeader();
+  drawTimeline();
+  if (!state.run || state.lead === null) {
+    map.setField(null);
+    setMessage(state.catalog?.models?.length ? "This run has no compiled forecast leads yet." : "Waiting for forecasts. Start the ingestion worker to populate the catalog.");
+    return;
+  }
+  const params = requestParams();
+  params.set("width", "480");
+  const key = params.toString();
+  try {
+    let grid = frames.get(key);
+    if (!grid) {
+      map.setField(null);
+      setMessage("Loading " + leadLabel(state.lead) + " forecast…");
+      grid = await getJSON("/api/field?" + key, controller.signal);
+      if (controller.signal.aborted) return;
+      frames.set(key, grid);
+      if (frames.size > 12) frames.delete(frames.keys().next().value);
+    }
+    map.setField(grid, scaleFor(state.field, state.product));
+    setMessage(null);
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    map.setField(null);
+    setMessage("Forecast unavailable. " + error.message);
+  }
+}
+
+async function drawPoint() {
+  pointRequest?.abort();
+  if (!state.point) {
+    $("probe-hint").hidden = false;
+    $("probe-hint").textContent = "Select a point on the map to sample the forecast grid.";
+    $("probe-result").hidden = true;
+    $("clear-point").hidden = true;
+    return;
+  }
+  $("clear-point").hidden = false;
+  $("probe-result").hidden = true;
+  $("probe-hint").hidden = false;
+  if (state.lead === null) {
+    $("probe-hint").textContent = "A compiled forecast lead is required.";
+    return;
+  }
+  $("probe-hint").textContent = "Sampling the source grid…";
+  const controller = new AbortController();
+  pointRequest = controller;
+  const params = requestParams();
+  params.set("lat", state.point.lat);
+  params.set("lon", state.point.lon);
+  try {
+    const data = await getJSON("/api/point?" + params, controller.signal);
+    if (controller.signal.aborted) return;
+    const scale = scaleFor(state.field, state.product);
+    $("probe-label").textContent = scale.label;
+    $("probe-value").textContent = data.value === null ? "Missing" : scale.convert(data.value).toFixed(state.field === "z500" ? 0 : 1) + " " + scale.unit;
+    $("probe-coordinates").textContent = data.latitude.toFixed(2) + "°, " + data.longitude.toFixed(2) + "° · grid point";
+    $("probe-result").hidden = false;
+    $("probe-hint").hidden = true;
+    map.setPoint({lat: data.latitude, lon: data.longitude});
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    $("probe-hint").textContent = "Point unavailable. " + error.message;
+  }
+}
+
+function selectPoint(point) {
+  state.point = point;
+  map.setPoint(point);
+  drawPoint();
+}
+
+function refreshSelection() {
+  drawControls();
+  drawField();
+  drawPoint();
+}
+
+async function refreshCatalog(manual = false) {
+  catalogRequest?.abort();
+  const controller = new AbortController();
+  catalogRequest = controller;
+  $("refresh-catalog").disabled = true;
+  try {
+    const data = await getJSON("/api/catalog", controller.signal);
+    if (controller.signal.aborted) return;
+    const previous = [state.model, state.run, state.lead, state.field, state.product].join("/");
+    state.catalog = data;
+    selectDefaults();
+    const current = [state.model, state.run, state.lead, state.field, state.product].join("/");
+    const newest = Date.parse(data.generated_at);
+    if (!Number.isFinite(newest)) setCatalogBadge("waiting", "Waiting for data");
+    else if (Date.now() - newest > 60 * 60000) setCatalogBadge("stale", "Older catalog");
+    else setCatalogBadge("ready", "Catalog ready");
+    $("catalog-state").title = Number.isFinite(newest) ? "Catalog updated " + formatTime(new Date(newest)) : "No forecast catalog has been published yet";
+    if (manual) frames.clear();
+    if (manual || previous !== current || !data.models?.length) refreshSelection();
+    else {
+      drawControls();
+      drawTimeline();
+    }
+  } catch (error) {
+    if (controller.signal.aborted) return;
+    setCatalogBadge("waiting", "Catalog unavailable");
+    if (!state.catalog) setMessage("Could not load the forecast catalog. " + error.message);
+  } finally {
+    if (!controller.signal.aborted) $("refresh-catalog").disabled = false;
+  }
+}
+
+function setPlayback(on) {
+  playing = on;
+  playToken++;
+  clearTimeout(playTimer);
+  $("play").querySelector("use").setAttribute("href", on ? "#pause-icon" : "#play-icon");
+  $("play").title = on ? "Pause forecast" : "Play forecast";
+  $("play").setAttribute("aria-label", $("play").title);
+}
+
+async function changeLead(lead, pause = true) {
+  if (!usableLeads().includes(lead)) return;
+  if (pause) setPlayback(false);
+  state.lead = lead;
+  await Promise.all([drawField(), drawPoint()]);
+}
+
+function stepLead(offset) {
+  const leads = usableLeads();
+  const next = leads[leads.indexOf(state.lead) + offset];
+  if (next !== undefined) changeLead(next);
+}
+
+function play() {
+  setPlayback(!playing);
+  if (!playing) return;
+  const token = playToken;
+  const tick = async () => {
+    if (!playing || token !== playToken) return;
+    const leads = usableLeads();
+    if (leads.length < 2) {
+      setPlayback(false);
+      return;
+    }
+    await changeLead(leads[(leads.indexOf(state.lead) + 1) % leads.length], false);
+    if (playing && token === playToken) playTimer = setTimeout(tick, 700);
+  };
+  tick();
+}
+
+function resetDomain() {
+  map.setDomain(state.domain);
+  $("map-tag").textContent = $("region").selectedOptions[0].text.toUpperCase() + " · LAT / LON";
+}
+
+$("model").addEventListener("change", () => {
+  setPlayback(false);
+  state.model = $("model").value;
+  selectDefaults(true);
+  refreshSelection();
+});
+$("cycle").addEventListener("change", () => {
+  setPlayback(false);
+  state.run = $("cycle").value;
+  selectDefaults();
+  refreshSelection();
+});
+for (const id of ["field", "product"]) {
+  $(id).addEventListener("change", () => {
+    setPlayback(false);
+    state[id] = $(id).value;
+    refreshSelection();
+  });
+}
+$("region").addEventListener("change", () => { state.domain = $("region").value; resetDomain(); });
+$("reset-map").addEventListener("click", resetDomain);
+$("zoom-in").addEventListener("click", () => map.zoom(.72));
+$("zoom-out").addEventListener("click", () => map.zoom(1.39));
+$("clear-point").addEventListener("click", () => selectPoint(null));
+$("prev-lead").addEventListener("click", () => stepLead(-1));
+$("next-lead").addEventListener("click", () => stepLead(1));
+$("play").addEventListener("click", play);
+$("refresh-catalog").addEventListener("click", () => refreshCatalog(true));
+
+getJSON("/viewer/boundaries.json").then(layers => map.setBoundaries(layers)).catch(() => {
+  document.querySelector(".attribution").textContent = "Map boundaries unavailable";
+});
+resetDomain();
+refreshCatalog();
+setInterval(() => refreshCatalog(), 60000);

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Model Viewer — Global Forecast Explorer</title>
+  <link rel="stylesheet" href="/viewer/app.css">
+  <script type="module" src="/viewer/app.js"></script>
+</head>
+<body>
+  <svg class="symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 7h14M5 17h14"/></symbol>
+    <symbol id="sliders" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></symbol>
+    <symbol id="pin" viewBox="0 0 24 24"><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2 7M20 4v7h-7"/></symbol>
+    <symbol id="prev" viewBox="0 0 24 24"><path d="m15 5-7 7 7 7"/></symbol>
+    <symbol id="next" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="play-icon" viewBox="0 0 24 24"><path d="m8 5 12 7-12 7Z"/></symbol>
+    <symbol id="pause-icon" viewBox="0 0 24 24"><path d="M9 5v14m6-14v14"/></symbol>
+    <symbol id="reset" viewBox="0 0 24 24"><path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6"/></symbol>
+  </svg>
+  <header class="top">
+    <div class="brand"><div class="mark"><svg><use href="#globe"/></svg></div><div><strong>MODEL VIEWER</strong><span>GLOBAL FORECAST EXPLORER</span></div></div>
+    <div class="top-actions">
+      <span class="catalog-state" id="catalog-state"><i></i><span>Connecting</span></span>
+      <a href="/status">Ingestion status <span aria-hidden="true">↗</span></a>
+      <button class="icon" id="refresh-catalog" type="button" title="Refresh forecast catalog" aria-label="Refresh forecast catalog"><svg><use href="#refresh"/></svg></button>
+    </div>
+  </header>
+  <main>
+    <div class="intro"><div><div class="eyebrow">NUMERICAL WEATHER PREDICTION</div><h1>Forecast explorer</h1></div><p>Explore deterministic and ensemble forecasts from NOAA and ECMWF.</p></div>
+    <div class="workbench">
+      <aside class="rail" aria-label="Forecast tools">
+        <section class="panel controls">
+          <div class="section-title"><svg><use href="#sliders"/></svg><h2>Forecast controls</h2></div>
+          <label for="model">Model</label><select id="model" disabled></select>
+          <label for="cycle">Initialization <span>UTC</span></label><select id="cycle" disabled></select>
+          <label for="field">Field</label><select id="field" disabled></select>
+          <label for="product">Product</label><select id="product" disabled></select>
+          <div class="coverage" id="coverage" aria-live="polite">Waiting for the forecast catalog.</div>
+        </section>
+        <section class="panel probe">
+          <div class="section-title"><svg><use href="#pin"/></svg><h2>Point inspector</h2></div>
+          <p id="probe-hint">Select a point on the map to sample the forecast grid.</p>
+          <dl id="probe-result" hidden>
+            <dt id="probe-label"></dt><dd class="point-value" id="probe-value"></dd>
+            <dt class="sr-only">Grid coordinates</dt><dd id="probe-coordinates"></dd>
+          </dl>
+          <button class="subtle" id="clear-point" type="button" hidden>Clear point</button>
+        </section>
+      </aside>
+      <div class="stage">
+        <section class="panel forecast" aria-labelledby="map-title">
+          <div class="map-header">
+            <div><div class="eyebrow" id="map-model">FORECAST MAP</div><h2 id="map-title">2 m temperature</h2></div>
+            <label class="region" for="region"><span>Domain</span><select id="region"><option value="global">Global</option><option value="north-america">North America</option><option value="conus">Contiguous US</option><option value="europe">Europe</option><option value="asia">Asia</option><option value="australia">Australia</option></select></label>
+          </div>
+          <div class="map" id="map-wrap">
+            <canvas id="map" tabindex="0" aria-label="Interactive forecast map. Drag to pan, scroll to zoom, or click to inspect a point. Use arrow keys to pan and Enter to inspect the center."></canvas>
+            <div class="map-tag" id="map-tag">LAT / LON</div>
+            <div class="zoom" aria-label="Map zoom controls">
+              <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+              <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+              <button type="button" id="reset-map" aria-label="Reset domain" title="Reset domain"><svg><use href="#reset"/></svg></button>
+            </div>
+            <div id="map-message" class="map-message" role="status">Loading forecast catalog…</div>
+            <div class="attribution">Boundaries by Natural Earth</div>
+          </div>
+          <div class="map-footer">
+            <div class="legend"><strong id="legend-title">Temperature · °C</strong><div id="legend-bar" class="legend-bar"></div><div class="legend-ticks" id="legend-ticks"></div></div>
+            <div class="valid"><span>VALID TIME</span><strong id="valid-time">—</strong><span id="map-details"></span></div>
+          </div>
+        </section>
+        <section class="panel timeline" aria-labelledby="timeline-title">
+          <div class="timeline-head">
+            <div><h2 id="timeline-title">Forecast timeline</h2><div id="timeline-info">Waiting for compiled leads</div></div>
+            <div class="transport">
+              <button type="button" class="icon" id="prev-lead" title="Previous available lead" aria-label="Previous available lead" disabled><svg><use href="#prev"/></svg></button>
+              <button type="button" class="icon primary" id="play" title="Play forecast" aria-label="Play forecast" disabled><svg><use href="#play-icon"/></svg></button>
+              <button type="button" class="icon" id="next-lead" title="Next available lead" aria-label="Next available lead" disabled><svg><use href="#next"/></svg></button>
+            </div>
+          </div>
+          <div class="lead-strip" id="leads" aria-label="Forecast lead hours"></div>
+        </section>
+        <footer>NOAA / NCEP &nbsp;·&nbsp; Contains modified ECMWF open forecast data (CC BY 4.0) <span>All times UTC</span></footer>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

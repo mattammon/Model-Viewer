@@ -1,7 +1,7 @@
-# Model Viewer: forecast ingestion foundation
+# Model Viewer
 
-A working Python backend for gathering recent global forecast output, preserving
-individual ensemble members, and compiling data for a future model viewer.
+A global forecast explorer with a Python worker that gathers forecast output,
+preserves individual ensemble members, and compiles gridded statistics.
 Python 3.11+ on Linux or macOS. No API keys or paid data subscription required
 for these public-data subsets. No cloud hosting or continuous service is enabled
 by downloading this project; run the worker locally or deploy it on a server.
@@ -48,13 +48,21 @@ python -m nwp_ingest --config config/smoke.json discover
 # Small end-to-end live run: six fields, lead 24 h, two members per ensemble.
 python -m nwp_ingest --config config/smoke.json sync
 
-# Local data monitor, field API, and nearest-gridpoint API.
+# Forecast map, ingestion status, and data API.
 python -m nwp_ingest --config config/smoke.json serve
 ```
 
-Open http://127.0.0.1:8080. The smoke profile is a two-member subset test;
-its statistics are explicitly marked `full_ensemble=false`. Do not interpret
-those quantiles as the full operational ensemble distribution.
+Open http://127.0.0.1:8080. Select a model, initialization, field, and product.
+Use the forecast timeline to step through available leads or play them in a loop.
+The domain menu includes global and regional views. Drag to pan, scroll or use
+the zoom buttons, and click the map to sample the nearest source gridpoint.
+The map uses a sampled latitude/longitude grid, with a fixed color scale for
+each field and statistic so frames can be compared across leads. The point
+inspector samples the full-resolution grid. Visit `/status` for ingestion details.
+
+The smoke profile has only one lead and two members per ensemble. The viewer
+shows the configured member count next to the full ensemble size. Use the
+starter profile for a multi-lead view and the full ensemble statistics.
 
 For continuous operational ingestion, use the same profile for the worker
 and the monitor, in separate terminals:
@@ -82,6 +90,21 @@ change the config argument in **both** services. A Linux systemd worker template
 is supplied in `deploy/nwp-ingest.service`; adjust its user and paths first.
 Docker and systemd examples require a machine where you can run persistent
 processes; they are not intended for a browser-only or Cloudflare Worker runtime.
+
+### Git history
+
+The project archive includes a portable Git bundle. After extracting it,
+clone the bundle to get the `main` branch and both the ingestion and viewer
+commits.
+
+```bash
+git clone model-viewer.bundle model-viewer-git
+cd model-viewer-git
+docker compose up --build -d
+```
+
+The bundle contains the tracked source and history. Forecast data is stored
+in the local data directory or Docker volume.
 
 ## Profiles and initial fields
 
@@ -214,11 +237,11 @@ Ensemble fields use `t2m__mean`, `t2m__spread`, `t2m__p10`, `t2m__p50`,
 Each JSON sidecar includes units, valid time, member list, processing metadata,
 and whether the full nominal ensemble was selected.
 
-## API foundation
+## Data API
 
 The server is a local development/data interface, not an authenticated internet
 service. It defaults to loopback. Use a proper application server, access
-controls, caching, and map tiles when building the production viewer.
+controls, and a suitable data-serving layer for a public deployment.
 
 | Endpoint | Result |
 | --- | --- |
@@ -228,11 +251,12 @@ controls, caching, and map tiles when building the production viewer.
 | `/api/point?model=ifs_ens&cycle=20261029T00Z&lead=24&field=ws10&stat=p90&lat=35.2&lon=-97.4` | Nearest gridpoint value and product metadata |
 
 Use a cycle from your actual catalog in those example URLs. No query silently
-substitutes another cycle. Fields are read from compiled products only; API
-requests do not launch downloads. Missing values are serialized as JSON null.
+substitutes another cycle. Add `member=1` to a field or point request to read
+that normalized ensemble member instead of a compiled statistic. API requests
+read existing local files. Missing values are serialized as JSON null.
 The field endpoint samples grid points for a small response, not a conservative
 spatial average. The point endpoint uses nearest-gridpoint sampling, not
-interpolation. The data monitor refreshes once per minute.
+interpolation. The viewer refreshes its catalog once per minute.
 
 ## Practical resource considerations
 
@@ -266,6 +290,11 @@ See `VALIDATION.md` for the live checks actually performed for this release.
 
 ## Sources and attribution
 
+Map linework comes from the public-domain Natural Earth 1:110 million scale
+coastline, land boundaries, and state/province boundaries (v5.1.2). The viewer
+ships only the coordinates needed to draw those lines.
+[Natural Earth](https://www.naturalearthdata.com/).
+
 Product definitions and operational changes were checked against primary
 sources on 29 October 2026:
 
@@ -279,12 +308,3 @@ sources on 29 October 2026:
 ECMWF open data are licensed under CC BY 4.0 and require appropriate attribution
 when used or redistributed. The source URLs, initialization, processing choices,
 and hashes are retained alongside downloaded and derived products.
-
-## Next viewer layer
-
-The backend exposes the data needed for maps, lead-time animation, member
-selection, mean/spread/percentile fields, point meteograms, and run-to-run
-comparisons. Those visualization tools are the next layer; this release supplies
-the ingestion worker, compiled arrays, status monitor, and API foundation.
-Additional variables such as precipitation and radiation need explicit
-accumulation-window and unit handling before they are added across all systems.

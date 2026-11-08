@@ -19,4 +19,4 @@ nwp = "nwp_ingest.cli:main"
 include = ["nwp_ingest*"]
 
 [tool.setuptools.package-data]
-nwp_ingest = ["dashboard.html"]
+nwp_ingest = ["dashboard.html", "viewer/*.html", "viewer/*.css", "viewer/*.js", "viewer/*.json"]
