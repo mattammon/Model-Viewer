@@ -2,7 +2,7 @@ const DOMAINS = {
   global: [-180, 180, -90, 90],
   "north-america": [-169, -48, 13, 74],
   conus: [-128, -65, 22, 52],
-  europe: [-26, 44, 30, 72],
+  europe: [-40, 60, 20, 80],
   asia: [38, 179, 4, 77],
   australia: [108, 158, -47, -8],
 };
@@ -41,7 +41,8 @@ export class ForecastMap {
     this.context = canvas.getContext("2d");
     this.onPoint = onPoint;
     this.onView = onView;
-    this.bounds = [...DOMAINS.global];
+    this.bounds = [...DOMAINS.europe];
+    this.limits = DOMAINS.global;
     this.layers = {};
     this.point = null;
     this.raster = null;
@@ -57,8 +58,9 @@ export class ForecastMap {
     this.schedule();
   }
 
-  setDomain(domain) {
-    this.bounds = [...DOMAINS[domain]];
+  setDomain(domain, limits) {
+    this.limits = limits || DOMAINS.global;
+    this.bounds = [...(limits || DOMAINS[domain])];
     this.schedule();
   }
 
@@ -121,8 +123,9 @@ export class ForecastMap {
   }
 
   view(center, width, height, x = .5, y = .5) {
-    const west = clamp(center.lon - width * x, -180, 180 - width);
-    const south = clamp(center.lat - height * (1 - y), -90, 90 - height);
+    const [left, right, bottom, top] = this.limits;
+    const west = clamp(center.lon - width * x, left, right - width);
+    const south = clamp(center.lat - height * (1 - y), bottom, top - height);
     this.bounds = [west, west + width, south, south + height];
     this.onView();
     this.schedule();
@@ -132,7 +135,9 @@ export class ForecastMap {
     const [west, east, south, north] = this.bounds;
     const width = east - west;
     const height = north - south;
-    const ratio = clamp(factor, Math.max(6 / width, 3 / height), Math.min(360 / width, 180 / height));
+    const [left, right, bottom, top] = this.limits;
+    const maximum = Math.min((right - left) / width, (top - bottom) / height);
+    const ratio = clamp(factor, Math.min(maximum, Math.max(6 / width, 3 / height)), maximum);
     this.view(this.location(x, y), width * ratio, height * ratio, x, y);
   }
 

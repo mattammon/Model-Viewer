@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "model-viewer-ingest"
 version = "0.1.0"
-description = "Resumable global NWP ingestion and ensemble compilation"
+description = "Regional NWP ingestion and ensemble compilation"
 requires-python = ">=3.11"
 dependencies = []
 
@@ -19,4 +19,4 @@ nwp = "nwp_ingest.cli:main"
 include = ["nwp_ingest*"]
 
 [tool.setuptools.package-data]
-nwp_ingest = ["dashboard.html", "viewer/*.html", "viewer/*.css", "viewer/*.js", "viewer/*.json"]
+nwp_ingest = ["dashboard.html", "z500_climatology.npz", "viewer/*.html", "viewer/*.css", "viewer/*.js", "viewer/*.json"]

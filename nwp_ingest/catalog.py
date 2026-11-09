@@ -80,7 +80,8 @@ class Catalog:
         if job["status"] != "complete" or not job["path"]:
             return False
         path = self.root / job["path"]
-        return path.is_file() and path.stat().st_size == job["size"] and sha256(path) == job["sha256"]
+        return (path.is_file() and (path.suffix != ".npz" or path.with_suffix(".json").is_file())
+                and path.stat().st_size == job["size"] and sha256(path) == job["sha256"])
 
     def prune(self, retain_cycles):
         """Remove only tracked forecast cycles; preserve newest complete fallback."""
@@ -110,7 +111,7 @@ class Catalog:
                     db.execute("DELETE FROM jobs WHERE model=? AND cycle=?", (name, cycle))
 
     def export(self, config):
-        from .models import MODELS, FIELDS
+        from .models import MODELS, product_fields
         groups, lead_states = {}, {}
         for job in self.jobs():
             key = (job["model"], job["cycle"])
@@ -142,7 +143,9 @@ class Catalog:
                            "latest_complete": complete[0]["cycle"] if complete else None, "runs": runs})
             models[-1]["latest_downloaded"] = downloaded[0]["cycle"] if downloaded else None
         result = {"schema_version": 1, "generated_at": utcnow(), "selection_id": config["selection_id"],
-                  "fields": {n: FIELDS[n].units for n in config["fields"]}, "models": models,
+                  "fields": product_fields(config), "models": models,
                   "attribution": "ECMWF open data: CC BY 4.0. Contains modified Copernicus/ECMWF information where applicable. NOAA/NCEP forecasts."}
+        if "bounds" in config:
+            result["bounds"] = config["bounds"]
         atomic_json(self.root / "catalog.json", result)
         return result

@@ -1,10 +1,18 @@
 import { ForecastMap } from "./map.js";
 
+const WIND_SPEED = {unit: "m/s", ticks: [0, 6, 12, 18, 24, 30], spread: 12, colors: ["#26354e", "#355a84", "#388c9e", "#5cbd8a", "#d1cc63", "#f0a348", "#d75350", "#974068"]};
+const WIND_DIRECTION = {unit: "° from", ticks: [0, 90, 180, 270, 360], tickLabels: ["N", "E", "S", "W", "N"], colors: ["#8855b6", "#405bc1", "#2ea0af", "#57ae61", "#ebc95f", "#df7947", "#b64875", "#8855b6"]};
 const FIELDS = {
   t2m: {label: "2 m temperature", unit: "°C", ticks: [-60, -40, -20, 0, 20, 40], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
   t850: {label: "850 hPa temperature", unit: "°C", ticks: [-45, -30, -15, 0, 15, 30], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
   mslp: {label: "Mean sea-level pressure", unit: "hPa", ticks: [960, 980, 1000, 1020, 1040], convert: value => value / 100, spread: 20, colors: ["#63308f", "#4366ab", "#6dbac8", "#c9d9ae", "#e4c368", "#ce7b42", "#a34a48"]},
-  ws10: {label: "10 m wind speed", unit: "m/s", ticks: [0, 6, 12, 18, 24, 30], spread: 12, colors: ["#26354e", "#355a84", "#388c9e", "#5cbd8a", "#d1cc63", "#f0a348", "#d75350", "#974068"]},
+  ws10: {...WIND_SPEED, label: "10 m wind speed"},
+  wd10: {...WIND_DIRECTION, label: "10 m wind direction"},
+  ws100: {...WIND_SPEED, label: "100 m wind speed", ticks: [0, 8, 16, 24, 32, 40]},
+  wd100: {...WIND_DIRECTION, label: "100 m wind direction"},
+  ws850: {...WIND_SPEED, label: "850 hPa wind speed", ticks: [0, 10, 20, 30, 40, 50], spread: 18},
+  wd850: {...WIND_DIRECTION, label: "850 hPa wind direction"},
+  z500_anom: {label: "500 hPa height anomaly", unit: "m", ticks: [-400, -200, 0, 200, 400], colors: ["#293879", "#4177b3", "#a5cbe5", "#e9e6d9", "#e9b18e", "#c86247", "#8c2d43"]},
   u10: {label: "10 m zonal wind", unit: "m/s", ticks: [-30, -20, -10, 0, 10, 20, 30], spread: 12, colors: ["#3b2d83", "#4775b6", "#75b9cd", "#d0e0da", "#e3be72", "#d77b49", "#9d4152"]},
   v10: {label: "10 m meridional wind", unit: "m/s", ticks: [-30, -20, -10, 0, 10, 20, 30], spread: 12, colors: ["#3b2d83", "#4775b6", "#75b9cd", "#d0e0da", "#e3be72", "#d77b49", "#9d4152"]},
   z500: {label: "500 hPa geopotential height", unit: "m", ticks: [4800, 5100, 5400, 5700, 6000], spread: 180, colors: ["#4f317e", "#3d5ca9", "#5ca0c8", "#82bca9", "#bcd478", "#d9c264", "#d97b44", "#9e3e51"]},
@@ -18,7 +26,7 @@ const PRODUCTS = {
   p90: "90th percentile",
 };
 const $ = id => document.getElementById(id);
-const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "global"};
+const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "europe"};
 const frames = new Map();
 let fieldRequest, pointRequest, catalogRequest;
 let playing = false;
@@ -67,7 +75,9 @@ function usableLeads() {
 function productOptions(model) {
   if (!model) return [];
   if (!model.ensemble) return [["deterministic", "Deterministic"]];
-  const options = Object.entries(PRODUCTS);
+  const options = Object.entries(PRODUCTS).filter(([key]) =>
+    state.field.startsWith("wd") ? key === "mean" : state.field !== "z500_anom" || key !== "spread");
+  if (state.field.startsWith("wd")) options[0][1] = "Ensemble circular mean";
   for (const member of model.configured_members || []) {
     options.push(["member-" + member, member === 0 ? "Control member" : "Member " + String(member).padStart(2, "0")]);
   }
@@ -82,8 +92,8 @@ function selectDefaults(modelChanged = false) {
     state.run = model?.runs.find(r => r.compiled_leads.length)?.cycle || model?.runs[0]?.cycle;
   }
   if (!usableLeads().includes(state.lead)) state.lead = usableLeads()[0] ?? null;
-  if (!productOptions(model).some(([key]) => key === state.product)) state.product = model?.ensemble ? "mean" : "deterministic";
   if (!state.catalog?.fields?.[state.field]) state.field = Object.keys(state.catalog?.fields || {}).find(key => key in FIELDS) || "t2m";
+  if (!productOptions(model).some(([key]) => key === state.product)) state.product = model?.ensemble ? "mean" : "deterministic";
 }
 
 function scaleFor(field, product) {
@@ -174,13 +184,13 @@ function drawHeader() {
   $("map-model").textContent = model ? model.label + " / " + product : "FORECAST MAP";
   $("legend-title").textContent = scale.label + " · " + scale.unit;
   $("legend-bar").style.background = "linear-gradient(90deg, " + scale.colors.join(", ") + ")";
-  $("legend-ticks").replaceChildren(...scale.ticks.map(value => {
+  $("legend-ticks").replaceChildren(...scale.ticks.map((value, index) => {
     const span = document.createElement("span");
-    span.textContent = Number(value.toFixed(1));
+    span.textContent = scale.tickLabels?.[index] ?? Number(value.toFixed(1));
     return span;
   }));
   $("valid-time").textContent = state.run && state.lead !== null ? formatTime(new Date(cycleDate(state.run).getTime() + state.lead * 3600000)) : "—";
-  $("map-details").textContent = state.lead !== null ? leadLabel(state.lead) + " · latitude / longitude" : "";
+  $("map-details").textContent = state.lead !== null ? leadLabel(state.lead) + (state.field === "z500_anom" ? " · NOAA PSL 1991–2020 daily normal" : " · latitude / longitude") : "";
 }
 
 async function drawField() {
@@ -275,7 +285,13 @@ async function refreshCatalog(manual = false) {
     const data = await getJSON("/api/catalog", controller.signal);
     if (controller.signal.aborted) return;
     const previous = [state.model, state.run, state.lead, state.field, state.product].join("/");
+    const oldBounds = JSON.stringify(state.catalog?.bounds);
     state.catalog = data;
+    if (data.bounds && oldBounds !== JSON.stringify(data.bounds)) {
+      setOptions($("region"), [["europe", "Europe and surroundings"]], "europe");
+      state.domain = "europe";
+      resetDomain();
+    }
     selectDefaults();
     const current = [state.model, state.run, state.lead, state.field, state.product].join("/");
     const newest = Date.parse(data.generated_at);
@@ -338,7 +354,7 @@ function play() {
 }
 
 function resetDomain() {
-  map.setDomain(state.domain);
+  map.setDomain(state.domain, state.catalog?.bounds);
   $("map-tag").textContent = $("region").selectedOptions[0].text.toUpperCase() + " · LAT / LON";
 }
 
@@ -358,6 +374,7 @@ for (const id of ["field", "product"]) {
   $(id).addEventListener("change", () => {
     setPlayback(false);
     state[id] = $(id).value;
+    selectDefaults();
     refreshSelection();
   });
 }

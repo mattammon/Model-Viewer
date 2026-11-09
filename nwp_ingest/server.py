@@ -1,10 +1,12 @@
 """Local forecast viewer, status dashboard, and bounded JSON API."""
+from datetime import timedelta
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
-from .models import MODELS, FIELDS, parse_cycle, selected_members
+from .climatology import SOURCE, daily_z500
+from .models import MODELS, product_fields, parse_cycle, selected_members
 
 VIEWER_ASSETS = {
     "/": ("index.html", "text/html"),
@@ -43,7 +45,10 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path in ("/api/catalog", "/health"):
                 path = self.pipeline.root / "catalog.json"
                 if not path.exists():
-                    self.json({"status": "waiting", "message": "Run sync or watch to populate this dataset", "models": []})
+                    waiting = {"status": "waiting", "message": "Run sync or watch to populate this dataset", "models": []}
+                    if "bounds" in self.pipeline.config:
+                        waiting["bounds"] = self.pipeline.config["bounds"]
+                    self.json(waiting)
                     return
                 data = json.loads(path.read_text())
                 if url.path == "/health":
@@ -56,8 +61,7 @@ class Handler(BaseHTTPRequestHandler):
                     for model in data["models"]:
                         model["configured_members"] = selected_members(self.pipeline.config, MODELS[model["id"]])
                         model["ensemble_size"] = MODELS[model["id"]].size
-                    if {"u10", "v10"} <= data["fields"].keys():
-                        data["fields"]["ws10"] = "m s-1"
+                    data["fields"] = product_fields(self.pipeline.config)
                     self.json(data)
             elif url.path in ("/api/field", "/api/point"):
                 self.field(url.path, parse_qs(url.query))
@@ -80,37 +84,52 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError(f"Missing query parameter: {key}")
             return value
         name, cycle = arg("model"), arg("cycle")
-        if name not in MODELS:
+        if name not in self.pipeline.config["models"]:
             raise ValueError("Unknown model")
-        cycle = parse_cycle(cycle).strftime("%Y%m%dT%HZ")
+        init = parse_cycle(cycle)
+        cycle = init.strftime("%Y%m%dT%HZ")
         lead = int(arg("lead"))
         if not 0 <= lead <= 384:
             raise ValueError("lead must be in 0..384")
         field, stat = arg("field", "t2m"), arg("stat", "mean")
-        if field not in FIELDS and field != "ws10":
+        if field not in product_fields(self.pipeline.config):
             raise ValueError("Unknown field")
         if stat not in ("mean", "spread", "p10", "p50", "p90", "member_count"):
             raise ValueError("Unknown statistic")
         member = query.get("member", [None])[0]
         statistic = stat if MODELS[name].ensemble else "deterministic"
+        if member is None and field.startswith("wd") and stat != "mean":
+            raise ValueError("Wind direction supports the circular mean or an individual member")
+        if member is None and field == "z500_anom" and stat in ("spread", "member_count"):
+            raise ValueError("Height anomalies support the mean, percentiles or an individual member")
+        source_field = "z500" if field == "z500_anom" else field
         if member is None:
             path = self.pipeline.root / "compiled" / name / cycle / f"f{lead:03d}.npz"
-            key = f"{field}__{stat}" if MODELS[name].ensemble else field
+            key = f"{source_field}__{stat}" if MODELS[name].ensemble else source_field
         else:
             member = int(member)
             if not MODELS[name].ensemble or member not in selected_members(self.pipeline.config, MODELS[name]):
                 raise ValueError("Ensemble member is outside the configured selection")
             path = self.pipeline.root / "normalized" / name / cycle / f"f{lead:03d}" / f"m{member:02d}.npz"
-            key = field
+            key = source_field
             statistic = "member"
         metadata = json.loads(path.with_suffix(".json").read_text())
         with np.load(path) as data:
             lat, lon, values = data["latitude"], data["longitude"], data[key]
+            if field == "z500_anom":
+                valid_date = (init + timedelta(hours=lead)).date()
+                values = values - daily_z500(valid_date, lat, lon)
+                metadata["climatology"] = {"source": SOURCE, "valid_date": valid_date.isoformat(),
+                                           "interpolation": "bilinear from 2.5 degree daily mean height"}
             if endpoint == "/api/point":
                 latitude, longitude = float(arg("lat")), float(arg("lon"))
                 if not np.isfinite(latitude) or not np.isfinite(longitude) or not -90 <= latitude <= 90:
                     raise ValueError("Invalid latitude/longitude")
                 longitude = (longitude + 180) % 360 - 180
+                if "bounds" in self.pipeline.config:
+                    west, east, south, north = self.pipeline.config["bounds"]
+                    if not (west <= longitude <= east and south <= latitude <= north):
+                        raise ValueError("Point is outside the forecast domain")
                 i = int(np.abs(lat - latitude).argmin())
                 j = int(np.abs((lon - longitude + 180) % 360 - 180).argmin())
                 number = float(values[i, j])

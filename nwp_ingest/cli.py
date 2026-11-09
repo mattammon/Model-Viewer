@@ -55,6 +55,8 @@ def main():
                 compile_available(pipeline.catalog, config)
                 pipeline.catalog.export(config)
         else:
+            if args.raw_only and "bounds" in config:
+                raise ValueError("--raw-only is unavailable for regional profiles")
             if not args.raw_only:
                 from .processing import require_processing
                 require_processing()

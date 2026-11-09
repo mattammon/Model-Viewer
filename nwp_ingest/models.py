@@ -2,7 +2,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import math
 from pathlib import Path
+from .climatology import REFERENCE_BOUNDS
 
 
 @dataclass(frozen=True)
@@ -21,8 +23,36 @@ FIELDS = {
     "u10": Field("u10", "m s-1", "UGRD", "10 m above ground", ("10u",)),
     "v10": Field("v10", "m s-1", "VGRD", "10 m above ground", ("10v",)),
     "z500": Field("z500", "m", "HGT", "500 mb", ("gh", "z"), 500),
+    "u850": Field("u850", "m s-1", "UGRD", "850 mb", ("u",), 850),
+    "v850": Field("v850", "m s-1", "VGRD", "850 mb", ("v",), 850),
+    "u100": Field("u100", "m s-1", "UGRD", "100 m above ground", ("100u",)),
+    "v100": Field("v100", "m s-1", "VGRD", "100 m above ground", ("100v",)),
     "t850": Field("t850", "K", "TMP", "850 mb", ("t",), 850),
 }
+
+
+WIND_COMPONENTS = {
+    "10": ("u10", "v10"),
+    "100": ("u100", "v100"),
+    "850": ("u850", "v850"),
+}
+
+
+def product_fields(config):
+    fields = {name: FIELDS[name].units for name in config["fields"]}
+    bounds = config.get("bounds")
+    if bounds and "z500" in fields:
+        west, east, south, north = bounds
+        w, e, s, n = REFERENCE_BOUNDS
+        if w <= west < east <= e and s <= south < north <= n:
+            fields["z500_anom"] = "m"
+    for suffix, (u, v) in WIND_COMPONENTS.items():
+        if {u, v} <= fields.keys():
+            fields["ws" + suffix] = "m s-1"
+            if bounds is not None:
+                fields["wd" + suffix] = "degree"
+                del fields[u], fields[v]
+    return fields
 
 
 @dataclass(frozen=True)
@@ -109,6 +139,15 @@ def load_config(path):
         raise ValueError("retain_cycles must be a positive integer")
     # Fields and member selections define an independent catalog namespace.
     selection = {k: config.get(k) for k in ("fields", "members", "leads", "models")}
+    if "bounds" in config:
+        bounds = config["bounds"]
+        if (not isinstance(bounds, list) or len(bounds) != 4
+                or any(type(value) not in (int, float) or not math.isfinite(value) for value in bounds)):
+            raise ValueError("bounds must be [west, east, south, north] in degrees")
+        west, east, south, north = bounds
+        if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
+            raise ValueError("bounds must be ordered and within longitude/latitude limits")
+        selection["bounds"] = [float(value) for value in bounds]
     config["selection_id"] = hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()[:12]
     return config
 

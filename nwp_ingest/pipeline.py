@@ -82,11 +82,21 @@ class Pipeline:
             raise ValueError(f"No requested leads within {name} forecast horizon")
         self.catalog.plan(name, cycle_id(cycle), leads, selected_members(self.config, model))
 
+    def regional_messages(self, url, ranges):
+        import eccodes as ec
+        for start, end in ranges:
+            data = self.http.get(url, start, end)
+            if validate_grib(data) != 1:
+                raise ValueError("Regional ingestion expects one GRIB message per indexed range")
+            yield ec.codes_new_from_message(data)
+
     def download(self, job):
         if self.catalog.valid(job):
             return "cached"
         model, cycle = MODELS[job["model"]], parse_cycle(job["cycle"])
-        target = self.root / "raw" / model.id / job["cycle"] / f"f{job['lead']:03d}" / f"m{job['member']:02d}.grib2"
+        bounds = self.config.get("bounds")
+        folder, extension = ("normalized", "npz") if bounds is not None else ("raw", "grib2")
+        target = self.root / folder / model.id / job["cycle"] / f"f{job['lead']:03d}" / f"m{job['member']:02d}.{extension}"
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = None
         try:
@@ -97,6 +107,11 @@ class Pipeline:
                     chosen = select_messages(entries, model, job["member"], self.config["fields"], cycle)
                     # A field can share a GRIB2 message offset with another field.
                     ranges = sorted({(m.start, m.end) for m in chosen.values()}, key=lambda x: x[0])
+                    if bounds is not None:
+                        from .processing import decode_fields
+                        decode_fields(self.regional_messages(url, ranges), target, job, self.config["fields"],
+                                      bounds=bounds)
+                        break
                     fd, tmp_name = tempfile.mkstemp(dir=target.parent, prefix=".grib-")
                     tmp = Path(tmp_name)
                     with os.fdopen(fd, "wb") as output:
@@ -112,14 +127,16 @@ class Pipeline:
                         tmp.unlink(missing_ok=True)
             else:
                 raise (Missing if all_missing else RuntimeError)("; ".join(errors))
-            os.replace(tmp, target)
-            atomic_json(target.with_suffix(".json"), {
-                "model": model.id, "cycle": job["cycle"], "lead": job["lead"], "member": job["member"],
-                "source": url, "index": index_url, "downloaded_at": utcnow(),
-                "fields": {name: msg.metadata for name, msg in chosen.items()},
-                "sha256": sha256(target)})
+            digest = sha256(tmp if tmp is not None else target)
+            if bounds is None:
+                os.replace(tmp, target)
+                atomic_json(target.with_suffix(".json"), {
+                    "model": model.id, "cycle": job["cycle"], "lead": job["lead"], "member": job["member"],
+                    "source": url, "index": index_url, "downloaded_at": utcnow(),
+                    "fields": {name: msg.metadata for name, msg in chosen.items()},
+                    "sha256": digest})
             self.catalog.update(job, status="complete", path=str(target.relative_to(self.root)), size=target.stat().st_size,
-                                sha256=sha256(target), source=url, error=None)
+                                sha256=digest, source=url, error=None)
             return "downloaded"
         except Missing as exc:
             self.catalog.update(job, status="pending", error=str(exc), size=None)
@@ -148,6 +165,7 @@ class Pipeline:
                         errors.append({"model": name, "error": str(exc)})
                         LOG.error("Discovery %s: %s", name, exc)
             cutoff = datetime.now(timezone.utc) - timedelta(hours=self.config["lookback_hours"])
+            self.catalog.export(self.config)
             jobs = [j for j in self.catalog.jobs() if fixed_cycle and j["cycle"] == cycle_id(fixed_cycle)
                     or not fixed_cycle and parse_cycle(j["cycle"]) >= cutoff]
             counts = {"cached": 0, "downloaded": 0, "pending": 0, "failed": 0}

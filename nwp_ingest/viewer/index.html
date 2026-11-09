@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>Model Viewer — Global Forecast Explorer</title>
+  <title>Model Viewer — European Forecast Explorer</title>
   <link rel="stylesheet" href="/viewer/app.css">
   <script type="module" src="/viewer/app.js"></script>
 </head>
@@ -29,7 +29,7 @@
     </div>
   </header>
   <main>
-    <div class="intro"><div><div class="eyebrow">NUMERICAL WEATHER PREDICTION</div><h1>Forecast explorer</h1></div><p>Explore deterministic and ensemble forecasts from NOAA and ECMWF.</p></div>
+    <div class="intro"><div><div class="eyebrow">NUMERICAL WEATHER PREDICTION</div><h1>Forecast explorer</h1></div><p>Explore ECMWF IFS and AIFS ensemble forecasts over Europe and surrounding areas.</p></div>
     <div class="workbench">
       <aside class="rail" aria-label="Forecast tools">
         <section class="panel controls">
@@ -54,7 +54,7 @@
         <section class="panel forecast" aria-labelledby="map-title">
           <div class="map-header">
             <div><div class="eyebrow" id="map-model">FORECAST MAP</div><h2 id="map-title">2 m temperature</h2></div>
-            <label class="region" for="region"><span>Domain</span><select id="region"><option value="global">Global</option><option value="north-america">North America</option><option value="conus">Contiguous US</option><option value="europe">Europe</option><option value="asia">Asia</option><option value="australia">Australia</option></select></label>
+            <label class="region" for="region"><span>Domain</span><select id="region"><option value="global">Global</option><option value="north-america">North America</option><option value="conus">Contiguous US</option><option value="europe" selected>Europe</option><option value="asia">Asia</option><option value="australia">Australia</option></select></label>
           </div>
           <div class="map" id="map-wrap">
             <canvas id="map" tabindex="0" aria-label="Interactive forecast map. Drag to pan, scroll to zoom, or click to inspect a point. Use arrow keys to pan and Enter to inspect the center."></canvas>

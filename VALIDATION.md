@@ -1,4 +1,18 @@
-# Validation performed on 29 October 2026
+# Regional-profile validation
+
+Live tests used the 8 November 2026 12 UTC runs of IFS ENS and AIFS ENS,
+with the control and member 1 at forecast hours 0 and 24. All four
+lead/model combinations compiled. The retained member grids were 241 × 401
+with inclusive bounds of 40°W–60°E and 20°N–80°N. The regional run produced
+no raw GRIB files on disk.
+
+The API checks covered regional model and field selection,
+all three wind levels, wind direction for an individual member, rejection
+of out-of-domain points, and height anomalies against the UTC valid-day
+climatology. All 25 unit tests passed. The full 51-member profiles were
+not benchmarked.
+
+# Previous global-profile validation (29 October 2026)
 
 The completed-cycle integration test used actual public forecast output initialized at **00 UTC on 29 October 2026**, valid at **00 UTC on 30 October 2026** (lead 24 hours). Each ensemble test selected its control and perturbed member 1; deterministic products used their single operational forecast. All six requested fields were downloaded and decoded.
 
