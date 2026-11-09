@@ -9,6 +9,25 @@ export function formatTime(date) {
   return utcDate.format(date).replace(",", " ·") + " UTC";
 }
 
+const utcWeekday = new Intl.DateTimeFormat("en-GB", {timeZone: "UTC", weekday: "short"});
+export function formatValidTime(date) {
+  return utcWeekday.format(date) + " " + formatTime(date);
+}
+
+export function matchedRuns(primary, secondary) {
+  const byCycle = new Map(secondary.map(run => [run.cycle, run]));
+  return primary.flatMap(run => {
+    const other = byCycle.get(run.cycle);
+    if (!other) return [];
+    const compiled = new Set(other.compiled_leads);
+    const compiled_leads = run.compiled_leads.filter(lead => compiled.has(lead));
+    if (!compiled_leads.length) return [];
+    const planned = new Set(other.leads);
+    const leads = run.leads.filter(lead => planned.has(lead));
+    return [{...run, leads, compiled_leads, status: compiled_leads.length === leads.length ? "complete" : "partial"}];
+  });
+}
+
 export function validTime(cycle, lead) {
   return cycle && lead !== null ? +cycleDate(cycle) + lead * HOUR : null;
 }
@@ -42,7 +61,8 @@ function element(tag, attributes, text) {
   return node;
 }
 
-export function renderPointTrend(svg, samples, activeCycle, scale, message) {
+export function renderPointTrend(svg, series, activeCycle, scale, message) {
+  const samples = series.flatMap(line => line.points).sort((a, b) => a.cycle.localeCompare(b.cycle));
   svg.replaceChildren();
   const [left, right, top, bottom] = [33, 218, 12, 91];
   const text = (x, y, value, anchor = "middle") => element("text", {x, y, "text-anchor": anchor}, value);
@@ -73,26 +93,33 @@ export function renderPointTrend(svg, samples, activeCycle, scale, message) {
     svg.append(text(left, 108, cycleLabel(samples[0].cycle), "start"),
       text(right, 108, cycleLabel(samples.at(-1).cycle), "end"));
   }
-  let line = "", connected = false;
-  for (const point of samples) {
-    if (!Number.isFinite(point.value)) {
-      connected = false;
-      continue;
+  const description = [];
+  for (const {label, style, points} of series) {
+    let path = "", connected = false;
+    const markers = [];
+    const values = [];
+    for (const point of points) {
+      if (!Number.isFinite(point.value)) {
+        connected = false;
+        continue;
+      }
+      const cx = x(point.cycle), cy = y(point.value);
+      path += (connected ? " L " : " M ") + cx + " " + cy;
+      connected = true;
+      const active = point.cycle === activeCycle;
+      const marker = element("circle", {class: active ? "trend-marker current" : "trend-marker", cx, cy, r: active ? 4 : 2.5});
+      const pointText = formatTime(cycleDate(point.cycle)) + " · F" + String(point.lead).padStart(3, "0")
+        + " · " + number(point.value) + " " + scale.unit;
+      marker.append(element("title", {}, label + " · " + pointText));
+      markers.push(marker);
+      values.push(pointText);
     }
-    line += (connected ? " L " : " M ") + x(point.cycle) + " " + y(point.value);
-    connected = true;
+    if (path) {
+      const group = element("g", {class: "trend-series " + style, "aria-label": label});
+      group.append(element("path", {class: "trend-line", d: path}), ...markers);
+      svg.append(group);
+      description.push(label + " " + values.join(". "));
+    }
   }
-  svg.append(element("path", {class: "trend-line", d: line}));
-  for (const point of samples) {
-    if (!Number.isFinite(point.value)) continue;
-    const active = point.cycle === activeCycle;
-    const marker = element("circle", {class: active ? "trend-marker current" : "trend-marker",
-      cx: x(point.cycle), cy: y(point.value), r: active ? 4 : 2.5});
-    marker.append(element("title", {}, formatTime(cycleDate(point.cycle)) + " · F" + String(point.lead).padStart(3, "0")
-      + " · " + number(point.value) + " " + scale.unit));
-    svg.append(marker);
-  }
-  svg.setAttribute("aria-label", scale.label + " by run initialization in UTC. " + samples
-    .filter(point => Number.isFinite(point.value))
-    .map(point => formatTime(cycleDate(point.cycle)) + " " + number(point.value) + " " + scale.unit).join(". "));
+  svg.setAttribute("aria-label", scale.label + " by run initialization in UTC. " + description.join(". "));
 }

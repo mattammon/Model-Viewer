@@ -52,8 +52,11 @@
           <div class="section-title"><svg><use href="#pin"/></svg><h2>Point inspector</h2></div>
           <p id="probe-hint">Select a point on the map to sample the forecast grid.</p>
           <dl id="probe-result" hidden>
-            <dt id="probe-label"></dt><dd class="point-value" id="probe-value"></dd>
+            <dt id="probe-label"></dt>
+            <dd class="point-value"><span class="probe-model" id="probe-primary-model" hidden>IFS ENS</span><span id="probe-value"></span></dd>
             <dd id="probe-overlay" hidden></dd>
+            <dd class="point-value" id="probe-compare" hidden><span class="probe-model">AIFS ENS</span><span id="probe-compare-value"></span></dd>
+            <dd id="probe-compare-overlay" hidden></dd>
             <dt class="sr-only">Grid coordinates</dt><dd id="probe-coordinates"></dd>
           </dl>
           <button class="subtle" id="clear-point" type="button" hidden>Clear point</button>
@@ -64,6 +67,7 @@
               <text x="116" y="62" text-anchor="middle">Select a point on the map</text>
             </svg>
             <p class="trend-axis-label">Run initialization (UTC)</p>
+            <div class="trend-key" id="trend-key" hidden><span>IFS ENS</span><span>AIFS ENS</span></div>
           </div>
         </section>
       </aside>
@@ -73,16 +77,29 @@
             <div><div class="eyebrow" id="map-model">FORECAST MAP</div><h2 id="map-title">2 m temperature</h2></div>
             <label class="region" for="region"><span>Domain</span><select id="region"><option value="global">Global</option><option value="north-america">North America</option><option value="conus">Contiguous US</option><option value="europe" selected>Europe</option><option value="asia">Asia</option><option value="australia">Australia</option></select></label>
           </div>
-          <div class="map" id="map-wrap">
-            <canvas id="map" tabindex="0" aria-label="Interactive forecast map. Drag to pan, scroll to zoom, or click to inspect a point. Use arrow keys to pan and Enter to inspect the center."></canvas>
-            <div class="map-tag" id="map-tag">LAT / LON</div>
-            <div class="zoom" aria-label="Map zoom controls">
-              <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
-              <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
-              <button type="button" id="reset-map" aria-label="Reset domain" title="Reset domain"><svg><use href="#reset"/></svg></button>
+          <div class="map-panels" id="map-panels">
+            <div class="map-pane">
+              <h3 class="map-pane-title" id="primary-pane-title" hidden>IFS ENS</h3>
+              <div class="map" id="map-wrap">
+                <canvas id="map" tabindex="0" aria-label="Interactive forecast map. Drag to pan, scroll to zoom, or click to inspect a point. Use arrow keys to pan and Enter to inspect the center."></canvas>
+                <div class="map-tag" id="map-tag">LAT / LON</div>
+                <div class="zoom" aria-label="Map zoom controls">
+                  <button type="button" id="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+                  <button type="button" id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+                  <button type="button" id="reset-map" aria-label="Reset domain" title="Reset domain"><svg><use href="#reset"/></svg></button>
+                </div>
+                <div id="map-message" class="map-message" role="status">Loading forecast catalog…</div>
+                <div class="attribution">Boundaries by Natural Earth</div>
+              </div>
             </div>
-            <div id="map-message" class="map-message" role="status">Loading forecast catalog…</div>
-            <div class="attribution">Boundaries by Natural Earth</div>
+            <div class="map-pane" id="compare-pane" hidden>
+              <h3 class="map-pane-title">AIFS ENS</h3>
+              <div class="map">
+                <canvas id="compare-map" tabindex="0" aria-label="AIFS ensemble forecast map. Drag to pan, scroll to zoom, or click to inspect both models at a point."></canvas>
+                <div id="compare-map-message" class="map-message" role="status" hidden></div>
+                <div class="attribution">Boundaries by Natural Earth</div>
+              </div>
+            </div>
           </div>
           <div class="map-footer">
             <div class="legend"><strong id="legend-title">Temperature · °C</strong><div id="legend-bar" class="legend-bar"></div><div class="legend-ticks" id="legend-ticks"></div><p class="overlay-legend" id="overlay-legend" hidden></p></div>

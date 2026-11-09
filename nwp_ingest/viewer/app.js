@@ -1,5 +1,5 @@
 import { ForecastMap, HEIGHT_CONTOUR_INTERVAL } from "./map.js";
-import { availableValidTimes, cycleDate, formatTime, framesAt, renderPointTrend, validTime } from "./trend.js";
+import { availableValidTimes, cycleDate, formatTime, formatValidTime, framesAt, matchedRuns, renderPointTrend, validTime } from "./trend.js";
 
 const WIND_SPEED = {unit: "m/s", ticks: [0, 6, 12, 18, 24, 30], spread: 12, colors: ["#26354e", "#355a84", "#388c9e", "#5cbd8a", "#d1cc63", "#f0a348", "#d75350", "#974068"]};
 const TEMPERATURE_INTERVAL = 5;
@@ -25,14 +25,21 @@ const PRODUCTS = {
   p90: "90th percentile",
 };
 const $ = id => document.getElementById(id);
-const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "europe", showBarbs: true, mode: "forecast", trendValid: null};
+const IFS = "ifs_ens", AIFS = "aifs_ens";
+const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "europe", showBarbs: true, mode: "forecast", trendValid: null, compare: false};
 const frames = new Map();
 const pointTrends = new Map();
 let fieldRequest, pointRequest, catalogRequest, trendRequest;
 let playing = false;
 let playToken = 0;
 let playTimer;
-const map = new ForecastMap($("map"), selectPoint, () => { $("map-tag").textContent = "CUSTOM VIEW"; });
+const map = new ForecastMap($("map"), selectPoint, bounds => syncViewport(bounds, comparisonMap));
+const comparisonMap = new ForecastMap($("compare-map"), selectPoint, bounds => syncViewport(bounds, map));
+
+function syncViewport(bounds, peer) {
+  $("map-tag").textContent = "CUSTOM VIEW";
+  if (state.compare) peer.setViewport(bounds);
+}
 
 async function getJSON(path, signal) {
   const response = await fetch(path, {signal, cache: "no-store"});
@@ -51,12 +58,16 @@ function leadLabel(lead) {
   return "F" + String(lead).padStart(3, "0");
 }
 
-function selectedModel() {
-  return state.catalog?.models.find(model => model.id === state.model);
+function selectedModel(id = state.model) {
+  return state.catalog?.models.find(model => model.id === id);
+}
+
+function displayedModels() {
+  return state.compare ? [IFS, AIFS] : [state.model];
 }
 
 function selectedRun() {
-  return selectedModel()?.runs.find(run => run.cycle === state.run);
+  return modelRuns().find(run => run.cycle === state.run);
 }
 
 function usableLeads() {
@@ -64,7 +75,8 @@ function usableLeads() {
 }
 
 function modelRuns() {
-  return selectedModel()?.runs || [];
+  const runs = selectedModel()?.runs || [];
+  return state.compare ? matchedRuns(runs, selectedModel(AIFS)?.runs || []) : runs;
 }
 
 function displayedValidTime() {
@@ -126,10 +138,12 @@ function productOptions(model) {
 
 function selectDefaults(modelChanged = false) {
   const models = state.catalog?.models || [];
-  if (!selectedModel()) state.model = (models.find(m => m.id === "ifs_ens" && m.runs.some(r => r.compiled_leads.length)) || models.find(m => m.runs.some(r => r.compiled_leads.length)) || models[0])?.id;
+  if (state.compare) state.model = IFS;
+  else if (!selectedModel()) state.model = (models.find(m => m.id === IFS && m.runs.some(r => r.compiled_leads.length)) || models.find(m => m.runs.some(r => r.compiled_leads.length)) || models[0])?.id;
   const model = selectedModel();
+  const runs = modelRuns();
   if (!selectedRun() || modelChanged) {
-    state.run = model?.runs.find(r => r.compiled_leads.length)?.cycle || model?.runs[0]?.cycle;
+    state.run = runs.find(r => r.compiled_leads.length)?.cycle || runs[0]?.cycle;
   }
   if (!usableLeads().includes(state.lead)) state.lead = usableLeads()[0] ?? null;
   if (state.mode === "trend") selectTrendFrame();
@@ -156,15 +170,15 @@ function scaleFor(field, product) {
   return {...def, label, min: def.ticks[0], max: def.ticks.at(-1), convert: def.convert || (value => value)};
 }
 
-function requestParams(field, product = state.product, cycle = state.run, lead = state.lead) {
-  const params = new URLSearchParams({model: state.model, cycle, lead, field});
+function requestParams(field, product = state.product, {cycle = state.run, lead = state.lead, model = state.model} = {}) {
+  const params = new URLSearchParams({model, cycle, lead, field});
   if (product.startsWith("member-")) params.set("member", product.slice(7));
   else if (product !== "deterministic") params.set("stat", product);
   return params;
 }
 
-async function getFrame(field, product, signal) {
-  const params = requestParams(field, product);
+async function getFrame(field, product, signal, model) {
+  const params = requestParams(field, product, {model});
   params.set("width", "480");
   const key = params.toString();
   if (frames.has(key)) return frames.get(key);
@@ -177,15 +191,15 @@ async function getFrame(field, product, signal) {
 }
 
 function pointParams(field, product, point, frame) {
-  const params = requestParams(field, product, frame?.cycle, frame?.lead);
+  const params = requestParams(field, product, frame);
   params.set("lat", point.lat);
   params.set("lon", point.lon);
   return params;
 }
 
-function setMessage(message) {
-  $("map-message").textContent = message || "";
-  $("map-message").hidden = !message;
+function setMessage(message, id = "map-message") {
+  $(id).textContent = message || "";
+  $(id).hidden = !message;
 }
 
 function setCatalogBadge(mode, label) {
@@ -196,14 +210,21 @@ function setCatalogBadge(mode, label) {
 function drawControls() {
   const model = selectedModel();
   const run = selectedRun();
-  setOptions($("model"), (state.catalog?.models || []).map(m => [m.id, m.label]), state.model);
-  setOptions($("cycle"), (model?.runs || []).map(r => [r.cycle, formatTime(cycleDate(r.cycle)) + (r.status === "partial" ? " · partial" : "")]), state.run);
+  const modelOptions = (state.catalog?.models || []).map(m => [m.id, m.label]);
+  if (selectedModel(IFS) && selectedModel(AIFS)) modelOptions.push(["compare", "IFS + AIFS side by side"]);
+  setOptions($("model"), modelOptions, state.compare ? "compare" : state.model);
+  setOptions($("cycle"), modelRuns().map(r => [r.cycle, formatTime(cycleDate(r.cycle)) + (r.status === "partial" ? " · partial" : "")]), state.run);
+  $("map-panels").classList.toggle("comparison", state.compare);
+  $("compare-pane").hidden = !state.compare;
+  $("primary-pane-title").hidden = !state.compare;
+  $("trend-key").hidden = !state.compare;
   setOptions($("field"), fieldOptions(), state.field);
   $("wind-barb-controls").hidden = !windDirectionField();
   setOptions($("product"), productOptions(model), state.product);
   const parts = [];
   if (model) parts.push(model.resolution.replace("p", ".") + "° source grid");
-  if (model?.ensemble) parts.push(model.configured_members.length + " / " + model.ensemble_size + " members configured");
+  if (state.compare) parts.push("Matching initializations and valid times");
+  else if (model?.ensemble) parts.push(model.configured_members.length + " / " + model.ensemble_size + " members configured");
   if (run) parts.push(run.compiled_leads.length + " / " + run.leads.length + " leads compiled");
   $("coverage").textContent = parts.join(" · ") || "Waiting for the forecast catalog.";
 }
@@ -242,7 +263,7 @@ function drawTimeline() {
     const layout = JSON.stringify(times);
     if (select.dataset.layout !== layout) {
       setOptions(select, times.map(([time, count]) =>
-        [time, formatTime(new Date(time)) + " · " + count + (count === 1 ? " run" : " runs")]), state.trendValid);
+        [time, formatValidTime(new Date(time)) + " · " + count + (count === 1 ? " run" : " runs")]), state.trendValid);
       select.dataset.layout = layout;
     } else if (state.trendValid !== null) {
       select.value = String(state.trendValid);
@@ -285,7 +306,7 @@ function drawHeader() {
   const product = productOptions(model).find(([key]) => key === state.product)?.[1];
   const scale = scaleFor(shadingField(), state.product);
   $("map-title").textContent = hasHeightOverlay() ? "500 hPa geopotential height and anomaly" : scale.label;
-  $("map-model").textContent = model ? model.label + " / " + product : "FORECAST MAP";
+  $("map-model").textContent = model ? (state.compare ? "IFS ENS + AIFS ENS" : model.label) + " / " + product : "FORECAST MAP";
   $("legend-title").textContent = scale.label + " · " + scale.unit;
   const overlay = $("overlay-legend");
   overlay.textContent = hasHeightOverlay() ? "Black contours show heights every " + HEIGHT_CONTOUR_INTERVAL + " m"
@@ -300,65 +321,77 @@ function drawHeader() {
     return span;
   }));
   const valid = displayedValidTime();
-  $("valid-time").textContent = valid === null ? "—" : formatTime(new Date(valid));
+  $("valid-time").textContent = valid === null ? "—" : formatValidTime(new Date(valid));
   $("map-details").textContent = state.lead !== null ? leadLabel(state.lead) + (shadingField() === "z500_anom" ? " · NOAA PSL 1991–2020 daily normal" : " · latitude / longitude") : "";
 }
 
-async function drawField() {
-  fieldRequest?.abort();
-  const controller = new AbortController();
-  const {signal} = controller;
-  fieldRequest = controller;
-  drawHeader();
-  drawTimeline();
-  map.setWindOverlay(null);
-  map.setContourOverlay(null);
-  map.setField(null);
+async function drawMap(target, messageId, model, signal) {
+  target.setWindOverlay(null);
+  target.setContourOverlay(null);
+  target.setField(null);
   if (!state.run || state.lead === null) {
-    setMessage(state.catalog?.models?.length ? "This run has no compiled forecast leads yet." : "Waiting for forecasts. Start the ingestion worker to populate the catalog.");
+    const message = state.compare ? "Waiting for a lead compiled by both models."
+      : state.catalog?.models?.length ? "This run has no compiled forecast leads yet."
+        : "Waiting for forecasts. Start the ingestion worker to populate the catalog.";
+    setMessage(message, messageId);
     return;
   }
   const field = shadingField();
   const product = state.product;
   let grid;
   try {
-    setMessage("Loading " + leadLabel(state.lead) + " forecast…");
-    grid = await getFrame(field, product, signal);
+    setMessage("Loading " + leadLabel(state.lead) + " forecast…", messageId);
+    grid = await getFrame(field, product, signal, model);
     if (signal.aborted) return;
     const scale = scaleFor(field, product);
-    map.setField(grid, scale);
+    target.setField(grid, scale);
     if (field === "t2m" && product !== "spread") {
-      map.setContourOverlay(grid, {
+      target.setContourOverlay(grid, {
         interval: TEMPERATURE_INTERVAL,
         convert: scale.convert,
         color: level => TEMPERATURE_LINES[Math.max(0, Math.min(TEMPERATURE_LINES.length - 1, (level + 20) / TEMPERATURE_INTERVAL))],
         halo: true,
       });
     }
-    setMessage(null);
+    setMessage(null, messageId);
   } catch (error) {
     if (signal.aborted) return;
-    map.setField(null);
-    setMessage("Forecast unavailable. " + error.message);
+    target.setField(null);
+    setMessage("Forecast unavailable. " + error.message, messageId);
     return;
   }
   try {
     if (hasHeightOverlay()) {
-      const height = await getFrame("z500", product, signal);
-      if (!signal.aborted) map.setContourOverlay(height);
+      const height = await getFrame("z500", product, signal, model);
+      if (!signal.aborted) target.setContourOverlay(height);
     } else if (state.showBarbs && windDirectionField()) {
       const windProduct = barbProduct();
       const [speed, direction] = await Promise.all([
-        product === windProduct ? grid : getFrame(field, windProduct, signal),
-        getFrame(windDirectionField(), windProduct, signal),
+        product === windProduct ? grid : getFrame(field, windProduct, signal, model),
+        getFrame(windDirectionField(), windProduct, signal, model),
       ]);
-      if (!signal.aborted) map.setWindOverlay({speed, direction});
+      if (!signal.aborted) target.setWindOverlay({speed, direction});
     }
   } catch (error) {
     if (!signal.aborted) {
-      $("overlay-legend").textContent = "Overlay unavailable. " + error.message;
+      const modelLabel = state.compare ? " for " + (model === IFS ? "IFS ENS" : "AIFS ENS") : "";
+      $("overlay-legend").textContent = "Overlay unavailable" + modelLabel + ". " + error.message;
       $("overlay-legend").hidden = false;
     }
+  }
+}
+
+async function drawField() {
+  fieldRequest?.abort();
+  const controller = new AbortController();
+  fieldRequest = controller;
+  drawHeader();
+  drawTimeline();
+  const primary = drawMap(map, "map-message", state.model, controller.signal);
+  if (state.compare) {
+    await Promise.all([primary, drawMap(comparisonMap, "compare-map-message", AIFS, controller.signal)]);
+  } else {
+    await primary;
   }
 }
 
@@ -375,15 +408,22 @@ async function updatePointTrend() {
     return;
   }
 
-  const matches = framesAt(modelRuns(), valid);
   const field = shadingField(), product = state.product;
   const scale = scaleFor(field, product);
-  const requests = matches.map(frame => pointParams(field, product, point, frame).toString());
-  const key = requests.join("|");
-  const show = (samples, message = "No values for this valid time") => {
-    const count = samples.filter(sample => Number.isFinite(sample.value)).length;
-    caption.textContent = formatTime(new Date(valid)) + (count ? " · " + scale.unit : "");
-    renderPointTrend(chart, samples, state.run, scale, message);
+  const series = displayedModels().map(model => ({
+    model,
+    label: state.compare ? (model === IFS ? "IFS ENS" : "AIFS ENS") : selectedModel(model)?.label || model,
+    style: state.compare && model === AIFS ? "aifs" : "ifs",
+    points: [],
+  }));
+  const samples = series.flatMap(line => framesAt(selectedModel(line.model)?.runs || [], valid)
+    .map(frame => ({...frame, model: line.model, line})));
+  const requests = samples.map(frame => pointParams(field, product, point, frame).toString());
+  const key = String(state.compare) + "|" + requests.join("|");
+  const show = (lines, message = "No values for this valid time") => {
+    const hasValues = lines.some(line => line.points.some(sample => Number.isFinite(sample.value)));
+    caption.textContent = formatValidTime(new Date(valid)) + (hasValues ? " · " + scale.unit : "");
+    renderPointTrend(chart, lines, state.run, scale, message);
   };
   if (trendRequest?.key === key) return;
   trendRequest?.controller.abort();
@@ -403,16 +443,16 @@ async function updatePointTrend() {
   const responses = await Promise.allSettled(requests.map(query => getJSON("/api/point?" + query, controller.signal)));
   if (controller.signal.aborted) return;
   trendRequest = null;
-  const samples = matches.map((frame, index) => {
+  for (const [index, {cycle, lead, line}] of samples.entries()) {
     const result = responses[index];
     const value = result.status === "fulfilled" ? result.value.value : null;
-    return {...frame, value: Number.isFinite(value) ? scale.convert(value) : null};
-  });
+    line.points.push({cycle, lead, value: Number.isFinite(value) ? scale.convert(value) : null});
+  }
   if (responses.every(result => result.status === "fulfilled")) {
-    pointTrends.set(key, samples);
+    pointTrends.set(key, series);
     if (pointTrends.size > 48) pointTrends.delete(pointTrends.keys().next().value);
   }
-  show(samples);
+  show(series);
 }
 
 async function drawPoint() {
@@ -428,6 +468,7 @@ async function drawPoint() {
   $("clear-point").hidden = false;
   $("probe-result").hidden = true;
   $("probe-overlay").hidden = true;
+  $("probe-compare-overlay").hidden = true;
   $("probe-hint").hidden = false;
   if (state.lead === null) {
     $("probe-hint").textContent = "A compiled forecast lead is required.";
@@ -439,41 +480,57 @@ async function drawPoint() {
   const point = state.point;
   const field = shadingField();
   const product = state.product;
-  try {
-    const data = await getJSON("/api/point?" + pointParams(field, product, point), controller.signal);
-    if (controller.signal.aborted) return;
-    const scale = scaleFor(field, product);
-    $("probe-label").textContent = scale.label;
-    $("probe-value").textContent = data.value === null ? "Missing" : scale.convert(data.value).toFixed(field === "z500" ? 0 : 1) + " " + scale.unit;
-    $("probe-coordinates").textContent = data.latitude.toFixed(2) + "°, " + data.longitude.toFixed(2) + "° · grid point";
-    $("probe-result").hidden = false;
-    $("probe-hint").hidden = true;
-    map.setPoint({lat: data.latitude, lon: data.longitude});
-  } catch (error) {
-    if (!controller.signal.aborted) $("probe-hint").textContent = "Point unavailable. " + error.message;
+  const models = displayedModels();
+  const results = await Promise.allSettled(models.map(model =>
+    getJSON("/api/point?" + pointParams(field, product, point, {model}), controller.signal)));
+  if (controller.signal.aborted) return;
+  const sampled = results.find(result => result.status === "fulfilled")?.value;
+  if (!sampled) {
+    $("probe-hint").textContent = "Point unavailable. " + results[0].reason.message;
     return;
   }
+  const scale = scaleFor(field, product);
+  const pointValue = result => {
+    if (result.status === "rejected") return "Unavailable";
+    const {value} = result.value;
+    return value === null ? "Missing" : scale.convert(value).toFixed(field === "z500" ? 0 : 1) + " " + scale.unit;
+  };
+  $("probe-label").textContent = scale.label;
+  $("probe-value").textContent = pointValue(results[0]);
+  $("probe-primary-model").hidden = !state.compare;
+  $("probe-compare").hidden = !state.compare;
+  if (state.compare) $("probe-compare-value").textContent = pointValue(results[1]);
+  $("probe-coordinates").textContent = sampled.latitude.toFixed(2) + "°, " + sampled.longitude.toFixed(2) + "° · grid point";
+  $("probe-result").hidden = false;
+  $("probe-hint").hidden = true;
+  const location = {lat: sampled.latitude, lon: sampled.longitude};
+  map.setPoint(location);
+  comparisonMap.setPoint(location);
+
   const height = hasHeightOverlay();
   const extraField = height ? "z500" : windDirectionField();
   if (!extraField) return;
-  try {
-    const extraProduct = height ? product : barbProduct();
-    const {value} = await getJSON("/api/point?" + pointParams(extraField, extraProduct, point), controller.signal);
-    if (controller.signal.aborted || value === null) return;
-    const label = height ? "Height " : extraProduct === "mean" ? "Mean direction " : "Direction ";
-    $("probe-overlay").textContent = label + (height ? value.toFixed(0) + " m" : Math.round(value) % 360 + "° from");
-    $("probe-overlay").hidden = false;
-  } catch (error) {
-    if (!controller.signal.aborted) {
-      $("probe-overlay").textContent = "Overlay value unavailable";
-      $("probe-overlay").hidden = false;
+  const extraProduct = height ? product : barbProduct();
+  await Promise.all(models.map(async (model, index) => {
+    if (results[index].status !== "fulfilled") return;
+    const detail = $(index === 0 ? "probe-overlay" : "probe-compare-overlay");
+    try {
+      const {value} = await getJSON("/api/point?" + pointParams(extraField, extraProduct, point, {model}), controller.signal);
+      if (controller.signal.aborted || value === null) return;
+      const label = height ? "Height " : extraProduct === "mean" ? "Mean direction " : "Direction ";
+      detail.textContent = label + (height ? value.toFixed(0) + " m" : Math.round(value) % 360 + "° from");
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      detail.textContent = "Overlay value unavailable";
     }
-  }
+    detail.hidden = false;
+  }));
 }
 
 function selectPoint(point) {
   state.point = point;
   map.setPoint(point);
+  comparisonMap.setPoint(point);
   drawPoint();
 }
 
@@ -572,13 +629,16 @@ function play() {
 
 function resetDomain() {
   map.setDomain(state.domain, state.catalog?.bounds);
+  comparisonMap.setDomain(state.domain, state.catalog?.bounds);
   $("map-tag").textContent = $("region").selectedOptions[0].text.toUpperCase() + " · LAT / LON";
 }
 
 $("model").addEventListener("change", () => {
   setPlayback(false);
-  state.model = $("model").value;
-  selectDefaults(true);
+  state.compare = $("model").value === "compare";
+  state.model = state.compare ? IFS : $("model").value;
+  if (state.compare) comparisonMap.setViewport(map.bounds);
+  selectDefaults(!state.compare);
   refreshSelection();
 });
 $("cycle").addEventListener("change", () => {
@@ -602,7 +662,9 @@ $("show-barbs").addEventListener("change", event => {
 for (const id of ["barb-size", "barb-spacing"]) {
   $(id).addEventListener("input", () => {
     $(id + "-value").textContent = $(id).value + " px";
-    map.setBarbStyle(Number($("barb-size").value), Number($("barb-spacing").value));
+    const size = Number($("barb-size").value), spacing = Number($("barb-spacing").value);
+    map.setBarbStyle(size, spacing);
+    comparisonMap.setBarbStyle(size, spacing);
   });
 }
 $("region").addEventListener("change", () => { state.domain = $("region").value; resetDomain(); });
@@ -628,8 +690,11 @@ $("next-lead").addEventListener("click", () => stepFrame(1));
 $("play").addEventListener("click", play);
 $("refresh-catalog").addEventListener("click", () => refreshCatalog(true));
 
-getJSON("/viewer/boundaries.json").then(layers => map.setBoundaries(layers)).catch(() => {
-  document.querySelector(".attribution").textContent = "Map boundaries unavailable";
+getJSON("/viewer/boundaries.json").then(layers => {
+  map.setBoundaries(layers);
+  comparisonMap.setBoundaries(layers);
+}).catch(() => {
+  for (const label of document.querySelectorAll(".attribution")) label.textContent = "Map boundaries unavailable";
 });
 resetDomain();
 refreshCatalog();

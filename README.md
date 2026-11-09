@@ -43,7 +43,13 @@ Use **Forecast loop** to step through leads from one initialization. Switch to
 **Run-to-run loop** and pick a valid forecast time to play the matching compiled
 leads from successive initializations, oldest to newest. Click the map to sample
 the nearest gridpoint. The point inspector plots the selected value across runs
-at the displayed valid time in either mode. Drag to pan and scroll to zoom.
+at the displayed valid time in either mode. The valid time includes the UTC
+weekday. Drag to pan and scroll to zoom.
+
+Choose **IFS + AIFS side by side** in the model selector to compare matching
+initializations and compiled leads. Both maps use the same product, color
+scale, viewport, and selected point. The point trend shows each model's
+available history for the selected valid time.
 The map uses a sampled latitude/longitude grid, with a fixed color scale for
 each field and statistic so frames can be compared across leads. The point
 inspector samples the full-resolution grid. Visit `/status` for ingestion details.

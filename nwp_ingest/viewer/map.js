@@ -163,6 +163,11 @@ export class ForecastMap {
     this.schedule();
   }
 
+  setViewport(bounds) {
+    this.bounds = [...bounds];
+    this.schedule();
+  }
+
   setPoint(point) {
     this.point = point;
     this.schedule();
@@ -305,7 +310,7 @@ export class ForecastMap {
     const west = clamp(center.lon - width * x, left, right - width);
     const south = clamp(center.lat - height * (1 - y), bottom, top - height);
     this.bounds = [west, west + width, south, south + height];
-    this.onView();
+    this.onView(this.bounds);
     this.schedule();
   }
 
