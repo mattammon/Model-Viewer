@@ -1,17 +1,13 @@
-import { ForecastMap } from "./map.js";
+import { ForecastMap, HEIGHT_CONTOUR_INTERVAL } from "./map.js";
 
 const WIND_SPEED = {unit: "m/s", ticks: [0, 6, 12, 18, 24, 30], spread: 12, colors: ["#26354e", "#355a84", "#388c9e", "#5cbd8a", "#d1cc63", "#f0a348", "#d75350", "#974068"]};
-const WIND_DIRECTION = {unit: "° from", spread: 180, ticks: [0, 90, 180, 270, 360], tickLabels: ["N", "E", "S", "W", "N"], colors: ["#8855b6", "#405bc1", "#2ea0af", "#57ae61", "#ebc95f", "#df7947", "#b64875", "#8855b6"]};
 const FIELDS = {
   t2m: {label: "2 m temperature", unit: "°C", ticks: [-60, -40, -20, 0, 20, 40], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
   t850: {label: "850 hPa temperature", unit: "°C", ticks: [-45, -30, -15, 0, 15, 30], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
   mslp: {label: "Mean sea-level pressure", unit: "hPa", ticks: [960, 980, 1000, 1020, 1040], convert: value => value / 100, spread: 20, colors: ["#63308f", "#4366ab", "#6dbac8", "#c9d9ae", "#e4c368", "#ce7b42", "#a34a48"]},
-  ws10: {...WIND_SPEED, label: "10 m wind speed"},
-  wd10: {...WIND_DIRECTION, label: "10 m wind direction"},
-  ws100: {...WIND_SPEED, label: "100 m wind speed", ticks: [0, 8, 16, 24, 32, 40]},
-  wd100: {...WIND_DIRECTION, label: "100 m wind direction"},
-  ws850: {...WIND_SPEED, label: "850 hPa wind speed", ticks: [0, 10, 20, 30, 40, 50], spread: 18},
-  wd850: {...WIND_DIRECTION, label: "850 hPa wind direction"},
+  ws10: {...WIND_SPEED, label: "10 m wind"},
+  ws100: {...WIND_SPEED, label: "100 m wind", ticks: [0, 8, 16, 24, 32, 40]},
+  ws850: {...WIND_SPEED, label: "850 hPa wind", ticks: [0, 10, 20, 30, 40, 50], spread: 18},
   z500_anom: {label: "500 hPa height anomaly", unit: "m", ticks: [-400, -200, 0, 200, 400], colors: ["#293879", "#4177b3", "#a5cbe5", "#e9e6d9", "#e9b18e", "#c86247", "#8c2d43"]},
   u10: {label: "10 m zonal wind", unit: "m/s", ticks: [-30, -20, -10, 0, 10, 20, 30], spread: 12, colors: ["#3b2d83", "#4775b6", "#75b9cd", "#d0e0da", "#e3be72", "#d77b49", "#9d4152"]},
   v10: {label: "10 m meridional wind", unit: "m/s", ticks: [-30, -20, -10, 0, 10, 20, 30], spread: 12, colors: ["#3b2d83", "#4775b6", "#75b9cd", "#d0e0da", "#e3be72", "#d77b49", "#9d4152"]},
@@ -26,7 +22,7 @@ const PRODUCTS = {
   p90: "90th percentile",
 };
 const $ = id => document.getElementById(id);
-const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "europe"};
+const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "europe", showBarbs: true};
 const frames = new Map();
 let fieldRequest, pointRequest, catalogRequest;
 let playing = false;
@@ -72,19 +68,35 @@ function usableLeads() {
   return selectedRun()?.compiled_leads || [];
 }
 
+function fieldOptions() {
+  const fields = state.catalog?.fields || {};
+  return Object.keys(fields).filter(key => key in FIELDS && !(key === "z500_anom" && "z500" in fields))
+    .map(key => [key, hasHeightOverlay(key) ? "500 hPa height and anomaly" : FIELDS[key].label]);
+}
+
+function hasHeightOverlay(field = state.field) {
+  return field === "z500" && Boolean(state.catalog?.fields?.z500_anom);
+}
+
+function shadingField() {
+  return hasHeightOverlay() ? "z500_anom" : state.field;
+}
+
+function windDirectionField() {
+  if (!state.field.startsWith("ws")) return null;
+  const direction = "wd" + state.field.slice(2);
+  return state.catalog?.fields?.[direction] ? direction : null;
+}
+
+function barbProduct() {
+  return selectedModel()?.ensemble && !state.product.startsWith("member-") ? "mean" : state.product;
+}
+
 function productOptions(model) {
   if (!model) return [];
   if (!model.ensemble) return [["deterministic", "Deterministic"]];
   const summaryOnly = Boolean(state.catalog?.member_wind_bounds);
-  const direction = state.field.startsWith("wd");
-  const options = Object.entries(PRODUCTS).filter(([key]) => {
-    if (direction && !summaryOnly) return key === "mean";
-    return state.field !== "z500_anom" || key !== "spread";
-  });
-  if (direction) {
-    options[0][1] = "Ensemble circular mean";
-    if (summaryOnly) options[1][1] = "Circular standard deviation";
-  }
+  const options = Object.entries(PRODUCTS).filter(([key]) => shadingField() !== "z500_anom" || key !== "spread");
   if (!summaryOnly) {
     for (const member of model.configured_members || []) {
       options.push(["member-" + member, member === 0 ? "Control member" : "Member " + String(member).padStart(2, "0")]);
@@ -101,17 +113,19 @@ function selectDefaults(modelChanged = false) {
     state.run = model?.runs.find(r => r.compiled_leads.length)?.cycle || model?.runs[0]?.cycle;
   }
   if (!usableLeads().includes(state.lead)) state.lead = usableLeads()[0] ?? null;
-  if (!state.catalog?.fields?.[state.field]) state.field = Object.keys(state.catalog?.fields || {}).find(key => key in FIELDS) || "t2m";
+  const fields = fieldOptions();
+  if (!fields.some(([key]) => key === state.field)) state.field = fields[0]?.[0] || "t2m";
   if (!productOptions(model).some(([key]) => key === state.product)) state.product = model?.ensemble ? "mean" : "deterministic";
 }
 
 function scaleFor(field, product) {
   const def = FIELDS[field];
+  const label = field.startsWith("ws") ? def.label + " speed" : def.label;
   if (product === "spread") {
     const ticks = [0, .25, .5, .75, 1].map(n => n * def.spread);
     return {
-      label: def.label + " spread",
-      unit: def.unit === "°C" ? "K" : def.unit === "° from" ? "°" : def.unit,
+      label: label + " spread",
+      unit: def.unit === "°C" ? "K" : def.unit,
       ticks,
       min: 0,
       max: def.spread,
@@ -119,13 +133,33 @@ function scaleFor(field, product) {
       convert: field === "mslp" ? value => value / 100 : value => value,
     };
   }
-  return {...def, min: def.ticks[0], max: def.ticks.at(-1), convert: def.convert || (value => value)};
+  return {...def, label, min: def.ticks[0], max: def.ticks.at(-1), convert: def.convert || (value => value)};
 }
 
-function requestParams() {
-  const params = new URLSearchParams({model: state.model, cycle: state.run, lead: state.lead, field: state.field});
-  if (state.product.startsWith("member-")) params.set("member", state.product.slice(7));
-  else if (state.product !== "deterministic") params.set("stat", state.product);
+function requestParams(field, product = state.product) {
+  const params = new URLSearchParams({model: state.model, cycle: state.run, lead: state.lead, field});
+  if (product.startsWith("member-")) params.set("member", product.slice(7));
+  else if (product !== "deterministic") params.set("stat", product);
+  return params;
+}
+
+async function getFrame(field, product, signal) {
+  const params = requestParams(field, product);
+  params.set("width", "480");
+  const key = params.toString();
+  if (frames.has(key)) return frames.get(key);
+  const grid = await getJSON("/api/field?" + key, signal);
+  if (!signal.aborted) {
+    frames.set(key, grid);
+    if (frames.size > 12) frames.delete(frames.keys().next().value);
+  }
+  return grid;
+}
+
+function pointParams(field, product, point) {
+  const params = requestParams(field, product);
+  params.set("lat", point.lat);
+  params.set("lon", point.lon);
   return params;
 }
 
@@ -144,7 +178,8 @@ function drawControls() {
   const run = selectedRun();
   setOptions($("model"), (state.catalog?.models || []).map(m => [m.id, m.label]), state.model);
   setOptions($("cycle"), (model?.runs || []).map(r => [r.cycle, formatTime(cycleDate(r.cycle)) + (r.status === "partial" ? " · partial" : "")]), state.run);
-  setOptions($("field"), Object.keys(state.catalog?.fields || {}).filter(key => key in FIELDS).map(key => [key, FIELDS[key].label]), state.field);
+  setOptions($("field"), fieldOptions(), state.field);
+  $("wind-barb-controls").hidden = !windDirectionField();
   setOptions($("product"), productOptions(model), state.product);
   const parts = [];
   if (model) parts.push(model.resolution.replace("p", ".") + "° source grid");
@@ -188,50 +223,72 @@ function drawTimeline() {
 function drawHeader() {
   const model = selectedModel();
   const product = productOptions(model).find(([key]) => key === state.product)?.[1];
-  const scale = scaleFor(state.field, state.product);
-  $("map-title").textContent = scale.label;
+  const scale = scaleFor(shadingField(), state.product);
+  $("map-title").textContent = hasHeightOverlay() ? "500 hPa geopotential height and anomaly" : scale.label;
   $("map-model").textContent = model ? model.label + " / " + product : "FORECAST MAP";
   $("legend-title").textContent = scale.label + " · " + scale.unit;
+  const overlay = $("overlay-legend");
+  overlay.textContent = hasHeightOverlay() ? "Black contours show heights every " + HEIGHT_CONTOUR_INTERVAL + " m"
+    : windDirectionField() && state.showBarbs
+      ? (barbProduct() === "mean" ? "Barbs show mean speed and circular mean direction · kt" : "Barbs show wind speed and direction · kt")
+      : "";
+  overlay.hidden = !overlay.textContent;
   $("legend-bar").style.background = "linear-gradient(90deg, " + scale.colors.join(", ") + ")";
-  $("legend-ticks").replaceChildren(...scale.ticks.map((value, index) => {
+  $("legend-ticks").replaceChildren(...scale.ticks.map(value => {
     const span = document.createElement("span");
-    span.textContent = scale.tickLabels?.[index] ?? Number(value.toFixed(1));
+    span.textContent = Number(value.toFixed(1));
     return span;
   }));
   $("valid-time").textContent = state.run && state.lead !== null ? formatTime(new Date(cycleDate(state.run).getTime() + state.lead * 3600000)) : "—";
-  $("map-details").textContent = state.lead !== null ? leadLabel(state.lead) + (state.field === "z500_anom" ? " · NOAA PSL 1991–2020 daily normal" : " · latitude / longitude") : "";
+  $("map-details").textContent = state.lead !== null ? leadLabel(state.lead) + (shadingField() === "z500_anom" ? " · NOAA PSL 1991–2020 daily normal" : " · latitude / longitude") : "";
 }
 
 async function drawField() {
   fieldRequest?.abort();
   const controller = new AbortController();
+  const {signal} = controller;
   fieldRequest = controller;
   drawHeader();
   drawTimeline();
+  map.setWindOverlay(null);
+  map.setHeightOverlay(null);
+  map.setField(null);
   if (!state.run || state.lead === null) {
-    map.setField(null);
     setMessage(state.catalog?.models?.length ? "This run has no compiled forecast leads yet." : "Waiting for forecasts. Start the ingestion worker to populate the catalog.");
     return;
   }
-  const params = requestParams();
-  params.set("width", "480");
-  const key = params.toString();
+  const field = shadingField();
+  const product = state.product;
+  let grid;
   try {
-    let grid = frames.get(key);
-    if (!grid) {
-      map.setField(null);
-      setMessage("Loading " + leadLabel(state.lead) + " forecast…");
-      grid = await getJSON("/api/field?" + key, controller.signal);
-      if (controller.signal.aborted) return;
-      frames.set(key, grid);
-      if (frames.size > 12) frames.delete(frames.keys().next().value);
-    }
-    map.setField(grid, scaleFor(state.field, state.product));
+    setMessage("Loading " + leadLabel(state.lead) + " forecast…");
+    grid = await getFrame(field, product, signal);
+    if (signal.aborted) return;
+    map.setField(grid, scaleFor(field, product));
     setMessage(null);
   } catch (error) {
-    if (controller.signal.aborted) return;
+    if (signal.aborted) return;
     map.setField(null);
     setMessage("Forecast unavailable. " + error.message);
+    return;
+  }
+  try {
+    if (hasHeightOverlay()) {
+      const height = await getFrame("z500", product, signal);
+      if (!signal.aborted) map.setHeightOverlay(height);
+    } else if (state.showBarbs && windDirectionField()) {
+      const windProduct = barbProduct();
+      const [speed, direction] = await Promise.all([
+        product === windProduct ? grid : getFrame(field, windProduct, signal),
+        getFrame(windDirectionField(), windProduct, signal),
+      ]);
+      if (!signal.aborted) map.setWindOverlay({speed, direction});
+    }
+  } catch (error) {
+    if (!signal.aborted) {
+      $("overlay-legend").textContent = "Overlay unavailable. " + error.message;
+      $("overlay-legend").hidden = false;
+    }
   }
 }
 
@@ -246,6 +303,7 @@ async function drawPoint() {
   }
   $("clear-point").hidden = false;
   $("probe-result").hidden = true;
+  $("probe-overlay").hidden = true;
   $("probe-hint").hidden = false;
   if (state.lead === null) {
     $("probe-hint").textContent = "A compiled forecast lead is required.";
@@ -254,22 +312,38 @@ async function drawPoint() {
   $("probe-hint").textContent = "Sampling the source grid…";
   const controller = new AbortController();
   pointRequest = controller;
-  const params = requestParams();
-  params.set("lat", state.point.lat);
-  params.set("lon", state.point.lon);
+  const point = state.point;
+  const field = shadingField();
+  const product = state.product;
   try {
-    const data = await getJSON("/api/point?" + params, controller.signal);
+    const data = await getJSON("/api/point?" + pointParams(field, product, point), controller.signal);
     if (controller.signal.aborted) return;
-    const scale = scaleFor(state.field, state.product);
+    const scale = scaleFor(field, product);
     $("probe-label").textContent = scale.label;
-    $("probe-value").textContent = data.value === null ? "Missing" : scale.convert(data.value).toFixed(state.field === "z500" ? 0 : 1) + " " + scale.unit;
+    $("probe-value").textContent = data.value === null ? "Missing" : scale.convert(data.value).toFixed(field === "z500" ? 0 : 1) + " " + scale.unit;
     $("probe-coordinates").textContent = data.latitude.toFixed(2) + "°, " + data.longitude.toFixed(2) + "° · grid point";
     $("probe-result").hidden = false;
     $("probe-hint").hidden = true;
     map.setPoint({lat: data.latitude, lon: data.longitude});
   } catch (error) {
-    if (controller.signal.aborted) return;
-    $("probe-hint").textContent = "Point unavailable. " + error.message;
+    if (!controller.signal.aborted) $("probe-hint").textContent = "Point unavailable. " + error.message;
+    return;
+  }
+  const height = hasHeightOverlay();
+  const extraField = height ? "z500" : windDirectionField();
+  if (!extraField) return;
+  try {
+    const extraProduct = height ? product : barbProduct();
+    const {value} = await getJSON("/api/point?" + pointParams(extraField, extraProduct, point), controller.signal);
+    if (controller.signal.aborted || value === null) return;
+    const label = height ? "Height " : extraProduct === "mean" ? "Mean direction " : "Direction ";
+    $("probe-overlay").textContent = label + (height ? value.toFixed(0) + " m" : Math.round(value) % 360 + "° from");
+    $("probe-overlay").hidden = false;
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      $("probe-overlay").textContent = "Overlay value unavailable";
+      $("probe-overlay").hidden = false;
+    }
   }
 }
 
@@ -385,6 +459,16 @@ for (const id of ["field", "product"]) {
     state[id] = $(id).value;
     selectDefaults();
     refreshSelection();
+  });
+}
+$("show-barbs").addEventListener("change", event => {
+  state.showBarbs = event.target.checked;
+  drawField();
+});
+for (const id of ["barb-size", "barb-spacing"]) {
+  $(id).addEventListener("input", () => {
+    $(id + "-value").textContent = $(id).value + " px";
+    map.setBarbStyle(Number($("barb-size").value), Number($("barb-spacing").value));
   });
 }
 $("region").addEventListener("change", () => { state.domain = $("region").value; resetDomain(); });

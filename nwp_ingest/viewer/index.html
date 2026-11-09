@@ -38,6 +38,14 @@
           <label for="cycle">Initialization <span>UTC</span></label><select id="cycle" disabled></select>
           <label for="field">Field</label><select id="field" disabled></select>
           <label for="product">Product</label><select id="product" disabled></select>
+          <fieldset class="barb-controls" id="wind-barb-controls" hidden>
+            <legend class="sr-only">Wind barb settings</legend>
+            <label for="show-barbs">Wind barbs <input id="show-barbs" type="checkbox" checked></label>
+            <label for="barb-size">Barb size <output id="barb-size-value" for="barb-size">22 px</output></label>
+            <input id="barb-size" type="range" min="12" max="38" value="22">
+            <label for="barb-spacing">Barb spacing <output id="barb-spacing-value" for="barb-spacing">52 px</output></label>
+            <input id="barb-spacing" type="range" min="24" max="96" step="2" value="52">
+          </fieldset>
           <div class="coverage" id="coverage" aria-live="polite">Waiting for the forecast catalog.</div>
         </section>
         <section class="panel probe">
@@ -45,6 +53,7 @@
           <p id="probe-hint">Select a point on the map to sample the forecast grid.</p>
           <dl id="probe-result" hidden>
             <dt id="probe-label"></dt><dd class="point-value" id="probe-value"></dd>
+            <dd id="probe-overlay" hidden></dd>
             <dt class="sr-only">Grid coordinates</dt><dd id="probe-coordinates"></dd>
           </dl>
           <button class="subtle" id="clear-point" type="button" hidden>Clear point</button>
@@ -68,7 +77,7 @@
             <div class="attribution">Boundaries by Natural Earth</div>
           </div>
           <div class="map-footer">
-            <div class="legend"><strong id="legend-title">Temperature · °C</strong><div id="legend-bar" class="legend-bar"></div><div class="legend-ticks" id="legend-ticks"></div></div>
+            <div class="legend"><strong id="legend-title">Temperature · °C</strong><div id="legend-bar" class="legend-bar"></div><div class="legend-ticks" id="legend-ticks"></div><p class="overlay-legend" id="overlay-legend" hidden></p></div>
             <div class="valid"><span>VALID TIME</span><strong id="valid-time">—</strong><span id="map-details"></span></div>
           </div>
         </section>

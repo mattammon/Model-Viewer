@@ -49,6 +49,13 @@ h1 { font-size: clamp(27px, 3.2vw, 40px); font-weight: 650; line-height: 1.12; l
 .controls label span { font: 10px ui-monospace, monospace; color: var(--dim); }
 select { background: #0b1523; color: var(--text); border: 1px solid #2a3b52; border-radius: 7px; padding: 9px 8px; width: 100%; min-width: 0; font-size: 12px; }
 select:hover:not(:disabled) { border-color: #50778a; }
+.barb-controls { grid-column: 1 / -1; min-width: 0; margin: 12px 0 0; padding: 0; border: 0; border-top: 1px solid var(--line); }
+.barb-controls label { align-items: center; }
+.barb-controls input { accent-color: var(--accent); }
+.barb-controls input[type="range"] { display: block; width: 100%; margin: 5px 0; }
+.barb-controls input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.barb-controls output { color: var(--dim); font: 10px ui-monospace, monospace; }
+.overlay-legend { margin-top: 5px; color: var(--muted); font-size: 10px; }
 .coverage { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 11px; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .probe p, .probe dt, .probe dd { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 0; }
 .probe dl { margin: 0; }
@@ -98,3 +105,4 @@ canvas.dragging { cursor: grabbing; }
 footer { font-size: 10px; color: var(--dim); line-height: 1.4; display: flex; justify-content: space-between; gap: 10px; }
 @media (max-width: 850px) { .workbench { grid-template-columns: 200px minmax(0, 1fr); gap: 11px; } main { padding: 21px 14px; } .controls, .probe { padding: 12px; } .map-footer { gap: 8px; padding-inline: 11px; } }
 @media (max-width: 625px) { .top { padding: 9px 12px; } .top-actions { gap: 4px; } .top-actions a { font-size: 11px; padding: 5px; } .catalog-state { display: none; } .intro { margin-bottom: 13px; } .intro p { display: none; } .workbench { grid-template-columns: 1fr; } .rail { display: contents; } .controls { grid-row: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 9px; } .controls .section-title, .coverage { grid-column: 1/-1; margin: 0; } .controls label { grid-column: 1; align-self: center; margin: 0; } .controls select { grid-column: 2; } .stage { grid-row: 2; } .probe { grid-row: 3; } .map { height: 315px; } .map-header { padding: 11px; } .region > span { display: none; } .valid strong { font-size: 10px; } .brand span { font-size: 8px; } }
+@media (max-width: 625px) { .barb-controls label { margin-top: 8px; } }

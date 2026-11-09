@@ -45,6 +45,12 @@ The map uses a sampled latitude/longitude grid, with a fixed color scale for
 each field and statistic so frames can be compared across leads. The point
 inspector samples the full-resolution grid. Visit `/status` for ingestion details.
 
+Each wind level shades the selected speed statistic. Use the wind barb
+checkbox and the size and spacing sliders to adjust the overlay. Barbs use
+knots and show the ensemble mean speed and circular mean direction. The
+500 hPa field shades the selected height anomaly and overlays solid black
+height contours every 60 m for the same statistic.
+
 The smoke profile has only one lead and two members per ensemble. The viewer
 shows the configured member count next to the full ensemble size. Use the
 starter profile for a multi-lead view and the full ensemble statistics.
@@ -117,7 +123,7 @@ partial cycles; they are pruned as new cycles are ingested.
 The Open Data feed supplies 2 m air temperature. Wind speed and direction are
 calculated from the matching u/v components for each member before statistics
 are computed. Direction uses the meteorological convention (0° from north,
-90° from east). The viewer offers the circular ensemble mean, circular
+90° from east). The compiled data include the circular ensemble mean, circular
 standard deviation, and percentiles. Direction percentiles are computed from
 signed angular departures from the circular mean, then wrapped back to
 0–360°. Calm member directions and undefined circular means are missing.
@@ -271,6 +277,7 @@ still occupy space in the Docker volume.
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q nwp_ingest
+node --test tests/test_viewer_overlays.mjs
 ```
 
 The included tests cover exact level selection, shared GRIB offsets, IFS 50r1

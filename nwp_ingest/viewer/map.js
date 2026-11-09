@@ -35,6 +35,100 @@ function lookupTable(colors) {
   });
 }
 
+export const HEIGHT_CONTOUR_INTERVAL = 60;
+
+export function heightContours({latitude, longitude, values}, interval = HEIGHT_CONTOUR_INTERVAL) {
+  const contours = new Map();
+  for (let row = 0; row < latitude.length - 1; row++) {
+    for (let col = 0; col < longitude.length - 1; col++) {
+      const heights = [values[row][col], values[row][col + 1], values[row + 1][col + 1], values[row + 1][col]];
+      if (heights.some(value => !Number.isFinite(value))) continue;
+      const first = Math.ceil(Math.min(...heights) / interval) * interval;
+      const last = Math.max(...heights);
+      if (first >= last) continue;
+      const west = longitude[col], east = longitude[col + 1];
+      const south = latitude[row], north = latitude[row + 1];
+      const corners = [[west, south], [east, south], [east, north], [west, north]];
+      for (let level = first; level < last; level += interval) {
+        const above = heights.map(value => value > level);
+        const crossings = [];
+        for (let i = 0; i < 4; i++) {
+          const next = (i + 1) % 4;
+          if (above[i] === above[next]) continue;
+          const fraction = (level - heights[i]) / (heights[next] - heights[i]);
+          crossings.push(corners[i].map((value, axis) => value + fraction * (corners[next][axis] - value)));
+        }
+        if (!contours.has(level)) contours.set(level, []);
+        const segments = contours.get(level);
+        if (crossings.length === 2) {
+          segments.push(crossings);
+        } else if (crossings.length === 4) {
+          // Use the bilinear saddle decision to connect ambiguous crossings.
+          const [a, b, c, d] = heights.map(value => value - level);
+          const [p, q, r, t] = crossings;
+          if (a * c >= b * d) segments.push([p, q], [r, t]);
+          else segments.push([p, t], [q, r]);
+        }
+      }
+    }
+  }
+  return contours;
+}
+
+export function windBarbParts(speed) {
+  const knots = Math.round(speed * 1.94384449 / 5) * 5;
+  return {pennants: Math.floor(knots / 50), full: Math.floor(knots % 50 / 10), half: knots % 10 === 5};
+}
+
+function drawWindBarb(context, x, y, speed, direction, size) {
+  if (!Number.isFinite(speed) || speed < 0) return;
+  const {pennants, full, half} = windBarbParts(speed);
+  const calm = !pennants && !full && !half;
+  if (!calm && !Number.isFinite(direction)) return;
+  const lines = new Path2D();
+  const flags = new Path2D();
+  context.save();
+  context.translate(x, y);
+  if (calm) {
+    lines.arc(0, 0, size * .13, 0, Math.PI * 2);
+  } else {
+    context.rotate((direction - 90) * Math.PI / 180);
+    lines.moveTo(0, 0);
+    lines.lineTo(size, 0);
+    const step = size * Math.min(.14, .78 / (2 * pennants + full + Number(half)));
+    let position = size;
+    for (let i = 0; i < pennants; i++) {
+      flags.moveTo(position, 0);
+      flags.lineTo(position - 2 * step, 0);
+      flags.lineTo(position, size * .40);
+      flags.closePath();
+      position -= 2 * step;
+    }
+    for (let i = 0; i < full; i++) {
+      lines.moveTo(position, 0);
+      lines.lineTo(position + size * .21, size * .40);
+      position -= step;
+    }
+    if (half) {
+      if (!pennants && !full) position -= step;
+      lines.moveTo(position, 0);
+      lines.lineTo(position + size * .105, size * .20);
+    }
+  }
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  context.strokeStyle = "#ffffffe0";
+  context.lineWidth = 2.8;
+  context.stroke(lines);
+  if (pennants) context.stroke(flags);
+  context.strokeStyle = "#0a1422";
+  context.fillStyle = "#0a1422";
+  context.lineWidth = 1.2;
+  context.stroke(lines);
+  if (pennants) context.fill(flags);
+  context.restore();
+}
+
 export class ForecastMap {
   constructor(canvas, onPoint, onView) {
     this.canvas = canvas;
@@ -46,6 +140,10 @@ export class ForecastMap {
     this.layers = {};
     this.point = null;
     this.raster = null;
+    this.wind = null;
+    this.contours = null;
+    this.barbSize = 22;
+    this.barbSpacing = 52;
     this.drag = null;
     this.frame = 0;
     this.resize = new ResizeObserver(() => this.draw());
@@ -102,6 +200,79 @@ export class ForecastMap {
       };
     }
     this.schedule();
+  }
+
+  setWindOverlay(wind) {
+    this.wind = wind;
+    this.schedule();
+  }
+
+  setHeightOverlay(grid) {
+    this.contours = grid ? heightContours(grid) : null;
+    this.schedule();
+  }
+
+  setBarbStyle(size, spacing) {
+    this.barbSize = size;
+    this.barbSpacing = spacing;
+    this.schedule();
+  }
+
+  drawWindOverlay() {
+    if (!this.wind) return;
+    const {speed, direction} = this.wind;
+    const {latitude, longitude, values} = speed;
+    if (latitude.length < 2 || longitude.length < 2) return;
+    const [west, east, south, north] = this.bounds;
+    const dy = latitude[1] - latitude[0], dx = longitude[1] - longitude[0];
+    const rowStep = Math.max(1, Math.ceil(this.barbSpacing * (north - south) / (dy * this.height)));
+    const colStep = Math.max(1, Math.ceil(this.barbSpacing * (east - west) / (dx * this.width)));
+    const firstRow = Math.max(0, Math.ceil((south - latitude[0]) / (dy * rowStep)) * rowStep);
+    const firstCol = Math.max(0, Math.ceil((west - longitude[0]) / (dx * colStep)) * colStep);
+    for (let row = firstRow; row < latitude.length && latitude[row] <= north; row += rowStep) {
+      for (let col = firstCol; col < longitude.length && longitude[col] <= east; col += colStep) {
+        const [x, y] = this.project(longitude[col], latitude[row]);
+        drawWindBarb(this.context, x, y, values[row][col], direction.values[row][col], this.barbSize);
+      }
+    }
+  }
+
+  drawHeightOverlay() {
+    if (!this.contours) return;
+    const context = this.context;
+    const [west, east, south, north] = this.bounds;
+    const labels = [];
+    context.strokeStyle = "#000";
+    context.lineWidth = 1.25;
+    context.lineCap = "round";
+    context.beginPath();
+    for (const [level, segments] of this.contours) {
+      for (const [[lon1, lat1], [lon2, lat2]] of segments) {
+        if (Math.max(lon1, lon2) < west || Math.min(lon1, lon2) > east ||
+            Math.max(lat1, lat2) < south || Math.min(lat1, lat2) > north) continue;
+        const [x1, y1] = this.project(lon1, lat1);
+        const [x2, y2] = this.project(lon2, lat2);
+        context.moveTo(x1, y1);
+        context.lineTo(x2, y2);
+        const x = (x1 + x2) / 2, y = (y1 + y2) / 2;
+        if (x < 30 || x > this.width - 35 || y < 40 || y > this.height - 28) continue;
+        if (labels.some(label => Math.abs(label.x - x) < (label.level === level ? 150 : 44) &&
+            Math.abs(label.y - y) < (label.level === level ? 105 : 25))) continue;
+        labels.push({x, y, level});
+      }
+    }
+    context.stroke();
+    context.font = "bold 10px system-ui, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillStyle = "#000";
+    context.strokeStyle = "#ffffffe8";
+    context.lineWidth = 3;
+    for (const {x, y, level} of labels) {
+      context.strokeText(String(level), x, y);
+      context.fillText(String(level), x, y);
+    }
+    context.textBaseline = "alphabetic";
   }
 
   schedule() {
@@ -264,6 +435,8 @@ export class ForecastMap {
     this.drawLines(this.layers.states, span < 150 ? "#162737b0" : "#16273750", .7);
     this.drawLines(this.layers.borders, "#111f30c9", .85);
     this.drawLines(this.layers.coast, this.raster ? "#101b2e" : "#7793b3", 1.15);
+    this.drawHeightOverlay();
+    this.drawWindOverlay();
     if (span < 115) {
       c.textAlign = "left";
       c.font = "10px system-ui, sans-serif";
