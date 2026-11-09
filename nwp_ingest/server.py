@@ -13,6 +13,7 @@ VIEWER_ASSETS = {
     "/viewer/app.css": ("app.css", "text/css"),
     "/viewer/app.js": ("app.js", "text/javascript"),
     "/viewer/map.js": ("map.js", "text/javascript"),
+    "/viewer/trend.js": ("trend.js", "text/javascript"),
     "/viewer/boundaries.json": ("boundaries.json", "application/json"),
 }
 

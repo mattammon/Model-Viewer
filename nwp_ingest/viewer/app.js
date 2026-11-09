@@ -1,8 +1,11 @@
 import { ForecastMap, HEIGHT_CONTOUR_INTERVAL } from "./map.js";
+import { availableValidTimes, cycleDate, formatTime, framesAt, renderPointTrend, validTime } from "./trend.js";
 
 const WIND_SPEED = {unit: "m/s", ticks: [0, 6, 12, 18, 24, 30], spread: 12, colors: ["#26354e", "#355a84", "#388c9e", "#5cbd8a", "#d1cc63", "#f0a348", "#d75350", "#974068"]};
+const TEMPERATURE_INTERVAL = 5;
+const TEMPERATURE_LINES = ["#312979", "#2447ad", "#1b68bd", "#087891", "#00725a", "#477629", "#8b6500", "#a54f00", "#bb3219", "#a32035", "#791b49"];
 const FIELDS = {
-  t2m: {label: "2 m temperature", unit: "°C", ticks: [-60, -40, -20, 0, 20, 40], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
+  t2m: {label: "2 m temperature", unit: "°C", ticks: [-20, -10, 0, 10, 20, 30], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
   t850: {label: "850 hPa temperature", unit: "°C", ticks: [-45, -30, -15, 0, 15, 30], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
   mslp: {label: "Mean sea-level pressure", unit: "hPa", ticks: [960, 980, 1000, 1020, 1040], convert: value => value / 100, spread: 20, colors: ["#63308f", "#4366ab", "#6dbac8", "#c9d9ae", "#e4c368", "#ce7b42", "#a34a48"]},
   ws10: {...WIND_SPEED, label: "10 m wind"},
@@ -22,9 +25,10 @@ const PRODUCTS = {
   p90: "90th percentile",
 };
 const $ = id => document.getElementById(id);
-const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "europe", showBarbs: true};
+const state = {catalog: null, model: null, run: null, lead: null, field: "t2m", product: "mean", point: null, domain: "europe", showBarbs: true, mode: "forecast", trendValid: null};
 const frames = new Map();
-let fieldRequest, pointRequest, catalogRequest;
+const pointTrends = new Map();
+let fieldRequest, pointRequest, catalogRequest, trendRequest;
 let playing = false;
 let playToken = 0;
 let playTimer;
@@ -43,15 +47,6 @@ function setOptions(select, options, current) {
   select.disabled = options.length < 2;
 }
 
-function cycleDate(cycle) {
-  return new Date(cycle.slice(0, 4) + "-" + cycle.slice(4, 6) + "-" + cycle.slice(6, 8) + "T" + cycle.slice(9, 11) + ":00:00Z");
-}
-
-const utcDate = new Intl.DateTimeFormat("en-GB", {timeZone: "UTC", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23"});
-function formatTime(date) {
-  return utcDate.format(date).replace(",", " ·") + " UTC";
-}
-
 function leadLabel(lead) {
   return "F" + String(lead).padStart(3, "0");
 }
@@ -66,6 +61,30 @@ function selectedRun() {
 
 function usableLeads() {
   return selectedRun()?.compiled_leads || [];
+}
+
+function modelRuns() {
+  return selectedModel()?.runs || [];
+}
+
+function displayedValidTime() {
+  return validTime(state.run, state.lead);
+}
+
+function selectTrendFrame() {
+  const runs = modelRuns();
+  const times = availableValidTimes(runs);
+  if (!times.some(([time]) => time === state.trendValid)) {
+    const displayed = displayedValidTime();
+    state.trendValid = times.find(([time]) => time === displayed)?.[0]
+      ?? times.find(([, count]) => count > 1)?.[0] ?? times[0]?.[0] ?? null;
+  }
+  const matches = framesAt(runs, state.trendValid);
+  const selected = matches.find(frame => frame.cycle === state.run) || matches.at(-1);
+  if (selected) {
+    state.run = selected.cycle;
+    state.lead = selected.lead;
+  }
 }
 
 function fieldOptions() {
@@ -113,6 +132,7 @@ function selectDefaults(modelChanged = false) {
     state.run = model?.runs.find(r => r.compiled_leads.length)?.cycle || model?.runs[0]?.cycle;
   }
   if (!usableLeads().includes(state.lead)) state.lead = usableLeads()[0] ?? null;
+  if (state.mode === "trend") selectTrendFrame();
   const fields = fieldOptions();
   if (!fields.some(([key]) => key === state.field)) state.field = fields[0]?.[0] || "t2m";
   if (!productOptions(model).some(([key]) => key === state.product)) state.product = model?.ensemble ? "mean" : "deterministic";
@@ -136,8 +156,8 @@ function scaleFor(field, product) {
   return {...def, label, min: def.ticks[0], max: def.ticks.at(-1), convert: def.convert || (value => value)};
 }
 
-function requestParams(field, product = state.product) {
-  const params = new URLSearchParams({model: state.model, cycle: state.run, lead: state.lead, field});
+function requestParams(field, product = state.product, cycle = state.run, lead = state.lead) {
+  const params = new URLSearchParams({model: state.model, cycle, lead, field});
   if (product.startsWith("member-")) params.set("member", product.slice(7));
   else if (product !== "deterministic") params.set("stat", product);
   return params;
@@ -156,8 +176,8 @@ async function getFrame(field, product, signal) {
   return grid;
 }
 
-function pointParams(field, product, point) {
-  const params = requestParams(field, product);
+function pointParams(field, product, point, frame) {
+  const params = requestParams(field, product, frame?.cycle, frame?.lead);
   params.set("lat", point.lat);
   params.set("lon", point.lon);
   return params;
@@ -188,36 +208,76 @@ function drawControls() {
   $("coverage").textContent = parts.join(" · ") || "Waiting for the forecast catalog.";
 }
 
-function drawTimeline() {
-  const run = selectedRun();
+function timelineFrames() {
+  if (state.mode === "trend") {
+    return framesAt(modelRuns(), state.trendValid).map(frame => ({
+      ...frame, key: frame.cycle,
+      label: formatTime(cycleDate(frame.cycle)).replace(":00 UTC", "Z") + " · " + leadLabel(frame.lead),
+      title: "Initialized " + formatTime(cycleDate(frame.cycle)) + " · " + leadLabel(frame.lead),
+      available: true,
+    }));
+  }
   const leads = usableLeads();
+  return (selectedRun()?.leads || []).map(lead => ({
+    cycle: state.run, lead, key: String(lead), label: leadLabel(lead),
+    title: leads.includes(lead) ? "Forecast hour " + lead : "Lead pending compilation",
+    available: leads.includes(lead),
+  }));
+}
+
+function activeFrameKey() {
+  return state.mode === "trend" ? state.run : String(state.lead);
+}
+
+function drawTimeline() {
+  const trend = state.mode === "trend";
+  const items = timelineFrames();
+  const available = items.filter(frame => frame.available);
   const strip = $("leads");
-  const planned = run?.leads || [];
-  // Keep the timeline buttons in place on lead changes so keyboard focus stays put.
-  const layout = planned.map(lead => lead + ":" + leads.includes(lead)).join(",");
+  const key = activeFrameKey();
+  $("trend-picker").hidden = !trend;
+  if (trend) {
+    const times = availableValidTimes(modelRuns());
+    const select = $("trend-valid");
+    const layout = JSON.stringify(times);
+    if (select.dataset.layout !== layout) {
+      setOptions(select, times.map(([time, count]) =>
+        [time, formatTime(new Date(time)) + " · " + count + (count === 1 ? " run" : " runs")]), state.trendValid);
+      select.dataset.layout = layout;
+    } else if (state.trendValid !== null) {
+      select.value = String(state.trendValid);
+    }
+  }
+  $("timeline-title").textContent = trend ? "Run-to-run timeline" : "Forecast timeline";
+  strip.setAttribute("aria-label", trend ? "Run initializations" : "Forecast lead hours");
+  // Keep buttons in place during playback so focus and scrolling are preserved.
+  const layout = state.mode + JSON.stringify(items.map(({cycle, lead, available}) => [cycle, lead, available]));
   if (strip.dataset.layout !== layout) {
-    strip.replaceChildren(...planned.map(lead => {
+    strip.replaceChildren(...items.map(frame => {
       const button = document.createElement("button");
       button.type = "button";
-      button.dataset.lead = lead;
-      button.textContent = leadLabel(lead);
-      button.disabled = !leads.includes(lead);
-      button.title = button.disabled ? "Lead pending compilation" : "Forecast hour " + lead;
-      button.addEventListener("click", () => changeLead(lead));
+      button.dataset.key = frame.key;
+      button.textContent = frame.label;
+      button.title = frame.title;
+      button.disabled = !frame.available;
+      button.addEventListener("click", () => changeFrame(frame));
       return button;
     }));
     strip.dataset.layout = layout;
   }
-  for (const button of strip.children) button.setAttribute("aria-pressed", String(Number(button.dataset.lead) === state.lead));
+  for (const button of strip.children) button.setAttribute("aria-pressed", String(button.dataset.key === key));
   const active = strip.querySelector('[aria-pressed="true"]');
   if (active) {
     if (active.offsetLeft < strip.offsetLeft + strip.scrollLeft) strip.scrollLeft = active.offsetLeft - strip.offsetLeft;
-    else if (active.offsetLeft + active.offsetWidth > strip.offsetLeft + strip.scrollLeft + strip.clientWidth) strip.scrollLeft = active.offsetLeft - strip.offsetLeft + active.offsetWidth - strip.clientWidth + 4;
+    else if (active.offsetLeft + active.offsetWidth > strip.offsetLeft + strip.scrollLeft + strip.clientWidth) strip.scrollLeft = active.offsetLeft + active.offsetWidth - strip.offsetLeft - strip.clientWidth + 4;
   }
-  $("timeline-info").textContent = run ? leads.length + " of " + planned.length + " leads available" : "Waiting for compiled leads";
-  $("play").disabled = leads.length < 2;
-  $("prev-lead").disabled = leads.indexOf(state.lead) < 1;
-  $("next-lead").disabled = leads.indexOf(state.lead) >= leads.length - 1;
+  $("timeline-info").textContent = trend
+    ? available.length + (available.length === 1 ? " run" : " runs") + " for this valid time"
+    : selectedRun() ? available.length + " of " + items.length + " leads available" : "Waiting for compiled leads";
+  const index = available.findIndex(frame => frame.key === key);
+  $("play").disabled = available.length < 2;
+  $("prev-lead").disabled = index < 1;
+  $("next-lead").disabled = index < 0 || index >= available.length - 1;
 }
 
 function drawHeader() {
@@ -231,7 +291,7 @@ function drawHeader() {
   overlay.textContent = hasHeightOverlay() ? "Black contours show heights every " + HEIGHT_CONTOUR_INTERVAL + " m"
     : windDirectionField() && state.showBarbs
       ? (barbProduct() === "mean" ? "Barbs show mean speed and circular mean direction · kt" : "Barbs show wind speed and direction · kt")
-      : "";
+      : state.field === "t2m" && state.product !== "spread" ? "Colored temperature contours every 5 °C" : "";
   overlay.hidden = !overlay.textContent;
   $("legend-bar").style.background = "linear-gradient(90deg, " + scale.colors.join(", ") + ")";
   $("legend-ticks").replaceChildren(...scale.ticks.map(value => {
@@ -239,7 +299,8 @@ function drawHeader() {
     span.textContent = Number(value.toFixed(1));
     return span;
   }));
-  $("valid-time").textContent = state.run && state.lead !== null ? formatTime(new Date(cycleDate(state.run).getTime() + state.lead * 3600000)) : "—";
+  const valid = displayedValidTime();
+  $("valid-time").textContent = valid === null ? "—" : formatTime(new Date(valid));
   $("map-details").textContent = state.lead !== null ? leadLabel(state.lead) + (shadingField() === "z500_anom" ? " · NOAA PSL 1991–2020 daily normal" : " · latitude / longitude") : "";
 }
 
@@ -251,7 +312,7 @@ async function drawField() {
   drawHeader();
   drawTimeline();
   map.setWindOverlay(null);
-  map.setHeightOverlay(null);
+  map.setContourOverlay(null);
   map.setField(null);
   if (!state.run || state.lead === null) {
     setMessage(state.catalog?.models?.length ? "This run has no compiled forecast leads yet." : "Waiting for forecasts. Start the ingestion worker to populate the catalog.");
@@ -264,7 +325,16 @@ async function drawField() {
     setMessage("Loading " + leadLabel(state.lead) + " forecast…");
     grid = await getFrame(field, product, signal);
     if (signal.aborted) return;
-    map.setField(grid, scaleFor(field, product));
+    const scale = scaleFor(field, product);
+    map.setField(grid, scale);
+    if (field === "t2m" && product !== "spread") {
+      map.setContourOverlay(grid, {
+        interval: TEMPERATURE_INTERVAL,
+        convert: scale.convert,
+        color: level => TEMPERATURE_LINES[Math.max(0, Math.min(TEMPERATURE_LINES.length - 1, (level + 20) / TEMPERATURE_INTERVAL))],
+        halo: true,
+      });
+    }
     setMessage(null);
   } catch (error) {
     if (signal.aborted) return;
@@ -275,7 +345,7 @@ async function drawField() {
   try {
     if (hasHeightOverlay()) {
       const height = await getFrame("z500", product, signal);
-      if (!signal.aborted) map.setHeightOverlay(height);
+      if (!signal.aborted) map.setContourOverlay(height);
     } else if (state.showBarbs && windDirectionField()) {
       const windProduct = barbProduct();
       const [speed, direction] = await Promise.all([
@@ -292,7 +362,61 @@ async function drawField() {
   }
 }
 
+async function updatePointTrend() {
+  const chart = $("point-trend-chart");
+  const caption = $("point-trend-caption");
+  const valid = displayedValidTime();
+  const point = state.point;
+  if (!point || valid === null) {
+    trendRequest?.controller.abort();
+    trendRequest = null;
+    caption.textContent = "Forecast valid time";
+    renderPointTrend(chart, [], state.run, null, point ? "Waiting for forecasts" : "Select a point on the map");
+    return;
+  }
+
+  const matches = framesAt(modelRuns(), valid);
+  const field = shadingField(), product = state.product;
+  const scale = scaleFor(field, product);
+  const requests = matches.map(frame => pointParams(field, product, point, frame).toString());
+  const key = requests.join("|");
+  const show = (samples, message = "No values for this valid time") => {
+    const count = samples.filter(sample => Number.isFinite(sample.value)).length;
+    caption.textContent = formatTime(new Date(valid)) + (count ? " · " + scale.unit : "");
+    renderPointTrend(chart, samples, state.run, scale, message);
+  };
+  if (trendRequest?.key === key) return;
+  trendRequest?.controller.abort();
+  trendRequest = null;
+  if (pointTrends.has(key)) {
+    show(pointTrends.get(key));
+    return;
+  }
+  if (!requests.length) {
+    show([]);
+    return;
+  }
+
+  const controller = new AbortController();
+  trendRequest = {key, controller};
+  show([], "Loading run history…");
+  const responses = await Promise.allSettled(requests.map(query => getJSON("/api/point?" + query, controller.signal)));
+  if (controller.signal.aborted) return;
+  trendRequest = null;
+  const samples = matches.map((frame, index) => {
+    const result = responses[index];
+    const value = result.status === "fulfilled" ? result.value.value : null;
+    return {...frame, value: Number.isFinite(value) ? scale.convert(value) : null};
+  });
+  if (responses.every(result => result.status === "fulfilled")) {
+    pointTrends.set(key, samples);
+    if (pointTrends.size > 48) pointTrends.delete(pointTrends.keys().next().value);
+  }
+  show(samples);
+}
+
 async function drawPoint() {
+  updatePointTrend();
   pointRequest?.abort();
   if (!state.point) {
     $("probe-hint").hidden = false;
@@ -382,11 +506,17 @@ async function refreshCatalog(manual = false) {
     else if (Date.now() - newest > 60 * 60000) setCatalogBadge("stale", "Older catalog");
     else setCatalogBadge("ready", "Catalog ready");
     $("catalog-state").title = Number.isFinite(newest) ? "Catalog updated " + formatTime(new Date(newest)) : "No forecast catalog has been published yet";
-    if (manual) frames.clear();
+    if (manual) {
+      frames.clear();
+      pointTrends.clear();
+      trendRequest?.controller.abort();
+      trendRequest = null;
+    }
     if (manual || previous !== current || !data.models?.length) refreshSelection();
     else {
       drawControls();
       drawTimeline();
+      updatePointTrend();
     }
   } catch (error) {
     if (controller.signal.aborted) return;
@@ -406,17 +536,20 @@ function setPlayback(on) {
   $("play").setAttribute("aria-label", $("play").title);
 }
 
-async function changeLead(lead, pause = true) {
-  if (!usableLeads().includes(lead)) return;
+async function changeFrame(frame, pause = true) {
+  if (!frame?.available) return;
   if (pause) setPlayback(false);
-  state.lead = lead;
+  const changedRun = state.run !== frame.cycle;
+  state.run = frame.cycle;
+  state.lead = frame.lead;
+  if (changedRun) drawControls();
   await Promise.all([drawField(), drawPoint()]);
 }
 
-function stepLead(offset) {
-  const leads = usableLeads();
-  const next = leads[leads.indexOf(state.lead) + offset];
-  if (next !== undefined) changeLead(next);
+function stepFrame(offset) {
+  const items = timelineFrames().filter(frame => frame.available);
+  const index = items.findIndex(frame => frame.key === activeFrameKey());
+  if (index !== -1) changeFrame(items[index + offset]);
 }
 
 function play() {
@@ -425,12 +558,13 @@ function play() {
   const token = playToken;
   const tick = async () => {
     if (!playing || token !== playToken) return;
-    const leads = usableLeads();
-    if (leads.length < 2) {
+    const items = timelineFrames().filter(frame => frame.available);
+    if (items.length < 2) {
       setPlayback(false);
       return;
     }
-    await changeLead(leads[(leads.indexOf(state.lead) + 1) % leads.length], false);
+    const index = items.findIndex(frame => frame.key === activeFrameKey());
+    await changeFrame(items[(index + 1) % items.length], false);
     if (playing && token === playToken) playTimer = setTimeout(tick, 700);
   };
   tick();
@@ -476,8 +610,21 @@ $("reset-map").addEventListener("click", resetDomain);
 $("zoom-in").addEventListener("click", () => map.zoom(.72));
 $("zoom-out").addEventListener("click", () => map.zoom(1.39));
 $("clear-point").addEventListener("click", () => selectPoint(null));
-$("prev-lead").addEventListener("click", () => stepLead(-1));
-$("next-lead").addEventListener("click", () => stepLead(1));
+$("timeline-mode").addEventListener("change", event => {
+  setPlayback(false);
+  state.mode = event.target.value;
+  if (state.mode === "trend") state.trendValid = displayedValidTime();
+  selectDefaults();
+  refreshSelection();
+});
+$("trend-valid").addEventListener("change", event => {
+  setPlayback(false);
+  state.trendValid = Number(event.target.value);
+  selectTrendFrame();
+  refreshSelection();
+});
+$("prev-lead").addEventListener("click", () => stepFrame(-1));
+$("next-lead").addEventListener("click", () => stepFrame(1));
 $("play").addEventListener("click", play);
 $("refresh-catalog").addEventListener("click", () => refreshCatalog(true));
 

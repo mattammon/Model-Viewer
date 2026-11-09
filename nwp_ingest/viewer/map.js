@@ -37,12 +37,13 @@ function lookupTable(colors) {
 
 export const HEIGHT_CONTOUR_INTERVAL = 60;
 
-export function heightContours({latitude, longitude, values}, interval = HEIGHT_CONTOUR_INTERVAL) {
+export function gridContours({latitude, longitude, values}, interval = HEIGHT_CONTOUR_INTERVAL, convert = value => value) {
   const contours = new Map();
   for (let row = 0; row < latitude.length - 1; row++) {
     for (let col = 0; col < longitude.length - 1; col++) {
-      const heights = [values[row][col], values[row][col + 1], values[row + 1][col + 1], values[row + 1][col]];
-      if (heights.some(value => !Number.isFinite(value))) continue;
+      const cornersValues = [values[row][col], values[row][col + 1], values[row + 1][col + 1], values[row + 1][col]];
+      if (cornersValues.some(value => !Number.isFinite(value))) continue;
+      const heights = cornersValues.map(convert);
       const first = Math.ceil(Math.min(...heights) / interval) * interval;
       const last = Math.max(...heights);
       if (first >= last) continue;
@@ -207,8 +208,8 @@ export class ForecastMap {
     this.schedule();
   }
 
-  setHeightOverlay(grid) {
-    this.contours = grid ? heightContours(grid) : null;
+  setContourOverlay(grid, {interval, convert, color = () => "#000", halo = false} = {}) {
+    this.contours = grid ? {levels: gridContours(grid, interval, convert), color, halo} : null;
     this.schedule();
   }
 
@@ -237,16 +238,15 @@ export class ForecastMap {
     }
   }
 
-  drawHeightOverlay() {
+  drawContourOverlay() {
     if (!this.contours) return;
     const context = this.context;
     const [west, east, south, north] = this.bounds;
     const labels = [];
-    context.strokeStyle = "#000";
-    context.lineWidth = 1.25;
+    const {levels, color, halo} = this.contours;
     context.lineCap = "round";
-    context.beginPath();
-    for (const [level, segments] of this.contours) {
+    for (const [level, segments] of levels) {
+      context.beginPath();
       for (const [[lon1, lat1], [lon2, lat2]] of segments) {
         if (Math.max(lon1, lon2) < west || Math.min(lon1, lon2) > east ||
             Math.max(lat1, lat2) < south || Math.min(lat1, lat2) > north) continue;
@@ -260,15 +260,22 @@ export class ForecastMap {
             Math.abs(label.y - y) < (label.level === level ? 105 : 25))) continue;
         labels.push({x, y, level});
       }
+      if (halo) {
+        context.strokeStyle = "#ffffffa8";
+        context.lineWidth = 2.6;
+        context.stroke();
+      }
+      context.strokeStyle = color(level);
+      context.lineWidth = 1.25;
+      context.stroke();
     }
-    context.stroke();
     context.font = "bold 10px system-ui, sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.fillStyle = "#000";
     context.strokeStyle = "#ffffffe8";
     context.lineWidth = 3;
     for (const {x, y, level} of labels) {
+      context.fillStyle = color(level);
       context.strokeText(String(level), x, y);
       context.fillText(String(level), x, y);
     }
@@ -435,7 +442,7 @@ export class ForecastMap {
     this.drawLines(this.layers.states, span < 150 ? "#162737b0" : "#16273750", .7);
     this.drawLines(this.layers.borders, "#111f30c9", .85);
     this.drawLines(this.layers.coast, this.raster ? "#101b2e" : "#7793b3", 1.15);
-    this.drawHeightOverlay();
+    this.drawContourOverlay();
     this.drawWindOverlay();
     if (span < 115) {
       c.textAlign = "left";

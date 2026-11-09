@@ -31,6 +31,7 @@ def main():
     try:
         config = load_config(args.config)
         pipeline = Pipeline(config, args.data_root)
+        config = pipeline.config
         if args.command == "serve":
             from .server import serve
             serve(pipeline, args.host, args.port)

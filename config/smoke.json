@@ -29,23 +29,18 @@
   "workers": 4,
   "lookback_hours": 48,
   "poll_seconds": 900,
-  "retain_cycles": 4,
+  "retain_cycles": 8,
   "bounds": [
     -40,
     60,
     20,
     80
   ],
-  "cycle_hours": {
-    "ifs_ens": [
-      0,
-      12
-    ]
-  },
   "member_wind_bounds": [
     5,
     15,
     48,
     55
-  ]
+  ],
+  "strict_retention": true
 }

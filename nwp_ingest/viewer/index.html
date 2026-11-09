@@ -57,6 +57,14 @@
             <dt class="sr-only">Grid coordinates</dt><dd id="probe-coordinates"></dd>
           </dl>
           <button class="subtle" id="clear-point" type="button" hidden>Clear point</button>
+          <div class="point-trend">
+            <h3>Run-to-run point trend</h3>
+            <p id="point-trend-caption">Forecast valid time</p>
+            <svg id="point-trend-chart" viewBox="0 0 232 118" role="img" aria-label="Select a point on the map">
+              <text x="116" y="62" text-anchor="middle">Select a point on the map</text>
+            </svg>
+            <p class="trend-axis-label">Run initialization (UTC)</p>
+          </div>
         </section>
       </aside>
       <div class="stage">
@@ -84,11 +92,22 @@
         <section class="panel timeline" aria-labelledby="timeline-title">
           <div class="timeline-head">
             <div><h2 id="timeline-title">Forecast timeline</h2><div id="timeline-info">Waiting for compiled leads</div></div>
-            <div class="transport">
-              <button type="button" class="icon" id="prev-lead" title="Previous available lead" aria-label="Previous available lead" disabled><svg><use href="#prev"/></svg></button>
-              <button type="button" class="icon primary" id="play" title="Play forecast" aria-label="Play forecast" disabled><svg><use href="#play-icon"/></svg></button>
-              <button type="button" class="icon" id="next-lead" title="Next available lead" aria-label="Next available lead" disabled><svg><use href="#next"/></svg></button>
+            <div class="timeline-actions">
+              <label class="sr-only" for="timeline-mode">Loop mode</label>
+              <select id="timeline-mode">
+                <option value="forecast">Forecast loop</option>
+                <option value="trend">Run-to-run loop</option>
+              </select>
+              <div class="transport">
+                <button type="button" class="icon" id="prev-lead" title="Previous frame" aria-label="Previous frame" disabled><svg><use href="#prev"/></svg></button>
+                <button type="button" class="icon primary" id="play" title="Play forecast" aria-label="Play forecast" disabled><svg><use href="#play-icon"/></svg></button>
+                <button type="button" class="icon" id="next-lead" title="Next frame" aria-label="Next frame" disabled><svg><use href="#next"/></svg></button>
+              </div>
             </div>
+          </div>
+          <div class="trend-picker" id="trend-picker" hidden>
+            <label for="trend-valid">Valid forecast time</label>
+            <select id="trend-valid" disabled></select>
           </div>
           <div class="lead-strip" id="leads" aria-label="Forecast lead hours"></div>
         </section>

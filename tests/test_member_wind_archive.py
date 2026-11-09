@@ -1,3 +1,4 @@
+from datetime import timedelta
 import json
 from pathlib import Path
 import tempfile
@@ -7,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 
 from nwp_ingest.catalog import atomic_json, sha256
-from nwp_ingest.models import load_config, parse_cycle
+from nwp_ingest.models import cycle_id, load_config, parse_cycle
 from nwp_ingest.pipeline import Pipeline
 from nwp_ingest.processing import atomic_npz, direction_statistics
 
@@ -107,15 +108,53 @@ class MemberWindArchiveTests(unittest.TestCase):
             self.assertEqual(catalog["models"][0]["runs"][0]["compiled_leads"], [0, 6])
             self.assertEqual(list((self.pipeline.root / "normalized").rglob("*.npz")), [])
 
-    def test_starter_has_day_ten_and_long_ifs_cycles(self):
+    def test_starter_uses_full_horizon_of_all_cycle_hours(self):
         config = load_config(CONFIG / "starter.json")
         self.assertEqual(config["leads"], list(range(0, 241, 6)))
         self.assertEqual(config["member_wind_bounds"], [5, 15, 48, 55])
         pipe = Pipeline(config, self.pipeline.root)
-        newer, older = parse_cycle("20261108T18Z"), parse_cycle(KEY[1])
-        with patch("nwp_ingest.pipeline.cycles", return_value=[newer, older]), patch.object(pipe, "locate"):
-            self.assertEqual(pipe.discover("ifs_ens"), older)
-            self.assertEqual(pipe.discover("aifs_ens"), newer)
+        for hour, horizon in ((0, 240), (6, 144), (12, 240), (18, 144)):
+            with self.subTest(hour=hour):
+                cycle = parse_cycle(f"20261108T{hour:02d}Z")
+                with patch("nwp_ingest.pipeline.cycles", return_value=[cycle]), patch.object(pipe, "locate"):
+                    self.assertEqual(pipe.discover("ifs_ens"), cycle)
+                    self.assertEqual(pipe.discover("aifs_ens"), cycle)
+                pipe.plan("ifs_ens", cycle)
+                leads = {job["lead"] for job in pipe.catalog.jobs("ifs_ens", cycle_id(cycle))}
+                self.assertEqual(leads, set(range(0, horizon + 1, 6)))
+
+    def test_expanded_cycle_schedule_reuses_existing_dataset(self):
+        updated = load_config(CONFIG / "starter.json")
+        previous = json.loads((CONFIG / "starter.json").read_text())
+        previous["cycle_hours"] = {"ifs_ens": [0, 12]}
+        old_path = self.pipeline.root / "old.json"
+        old_path.write_text(json.dumps(previous))
+        old = Pipeline(load_config(old_path), self.pipeline.root)
+        upgraded = Pipeline(updated, self.pipeline.root)
+        self.assertEqual(old.root, upgraded.root)
+        self.assertEqual(upgraded.config["selection_id"], old.root.name)
+        self.assertFalse((self.pipeline.root / updated["selection_id"]).exists())
+
+    def test_strict_retention_keeps_eight_cycles_and_the_wind_archive(self):
+        config = load_config(CONFIG / "starter.json")
+        self.assertEqual(config["retain_cycles"], 8)
+        self.assertTrue(config["strict_retention"])
+        catalog = self.pipeline.catalog
+        model = "aifs_ens"
+        start = parse_cycle("20261106T00Z")
+        cycles = [cycle_id(start + timedelta(hours=6*i)) for i in range(10)]
+        for cycle in cycles:
+            catalog.plan(model, cycle, [0], [0])
+        oldest = cycles[0]
+        catalog.update(catalog.jobs(model, oldest)[0], status="complete")
+        summary = catalog.root / "compiled" / model / oldest / "f000.npz"
+        wind = catalog.root / "member_winds" / model / oldest / "f000.npz"
+        for path in (summary, wind):
+            atomic_npz(path, {"data": np.array([1])})
+        catalog.prune(config["retain_cycles"], keep_fallback=False)
+        self.assertEqual({job["cycle"] for job in catalog.jobs()}, set(cycles[-8:]))
+        self.assertFalse(summary.exists())
+        self.assertTrue(wind.exists())
 
     def test_direction_spread_and_quantiles_cross_north(self):
         stats = direction_statistics(np.array([[[350.]], [[10.]]], dtype="float32"))

@@ -83,8 +83,8 @@ class Catalog:
         return (path.is_file() and (path.suffix != ".npz" or path.with_suffix(".json").is_file())
                 and path.stat().st_size == job["size"] and sha256(path) == job["sha256"])
 
-    def prune(self, retain_cycles):
-        """Remove only tracked forecast cycles; preserve newest complete fallback."""
+    def prune(self, retain_cycles, *, keep_fallback=True):
+        """Remove old tracked forecast cycles, optionally keeping a usable fallback."""
         from .models import MODELS, parse_cycle
         grouped = {}
         for job in self.jobs():
@@ -94,13 +94,14 @@ class Catalog:
                 continue
             ordered = sorted(runs, reverse=True)
             keep = set(ordered[:retain_cycles])
-            complete = [c for c in ordered if all(j["status"] == "complete" for j in runs[c])]
-            if complete:
-                keep.add(complete[0])
-            ready = [c for c in complete if all((self.root / "compiled" / name / c / f"f{lead:03d}.npz").exists()
-                                               for lead in {j["lead"] for j in runs[c]})]
-            if ready:
-                keep.add(ready[0])
+            if keep_fallback:
+                complete = [c for c in ordered if all(j["status"] == "complete" for j in runs[c])]
+                if complete:
+                    keep.add(complete[0])
+                ready = [c for c in complete if all((self.root / "compiled" / name / c / f"f{lead:03d}.npz").exists()
+                                                   for lead in {j["lead"] for j in runs[c]})]
+                if ready:
+                    keep.add(ready[0])
             for cycle in set(ordered) - keep:
                 parse_cycle(cycle)  # Validate the tracked path component before removal.
                 # The member_winds archive is retained independently of viewer cycles.

@@ -14,9 +14,10 @@ by downloading this project; run the worker locally or deploy it on a server.
 | `aifs_ens` | ECMWF AIFS ensemble | 0 control + 1–50 perturbed | 0.25° |
 
 The shipped profiles use the inclusive domain **40°W–60°E, 20°N–80°N**
-(401 longitude points × 241 latitude points). They use IFS 00/12 UTC cycles
-for their longer forecasts and AIFS 00/06/12/18 UTC cycles. Availability is discovered independently
-from each model's indices. Since IFS Cycle 50r1, the IFS control member
+(401 longitude points × 241 latitude points). Both models use 00, 06, 12, and
+18 UTC initializations. The default profile ingests six-hourly leads through
+240 h for AIFS and IFS 00/12 UTC, and through 144 h for IFS 06/18 UTC.
+Availability is discovered independently from each model's indices. Since IFS Cycle 50r1, the IFS control member
 is obtained from the `oper/fc` stream and exposed as member 0 of the ensemble.
 
 ## Start
@@ -38,9 +39,11 @@ python -m nwp_ingest --config config/smoke.json serve
 ```
 
 Open http://127.0.0.1:8080. Select a model, initialization, field, and product.
-Use the forecast timeline to step through available leads or play them in a loop.
-Drag to pan and scroll to zoom within the forecast domain. Click the map to
-sample the nearest source gridpoint.
+Use **Forecast loop** to step through leads from one initialization. Switch to
+**Run-to-run loop** and pick a valid forecast time to play the matching compiled
+leads from successive initializations, oldest to newest. Click the map to sample
+the nearest gridpoint. The point inspector plots the selected value across runs
+at the displayed valid time in either mode. Drag to pan and scroll to zoom.
 The map uses a sampled latitude/longitude grid, with a fixed color scale for
 each field and statistic so frames can be compared across leads. The point
 inspector samples the full-resolution grid. Visit `/status` for ingestion details.
@@ -49,7 +52,8 @@ Each wind level shades the selected speed statistic. Use the wind barb
 checkbox and the size and spacing sliders to adjust the overlay. Barbs use
 knots and show the ensemble mean speed and circular mean direction. The
 500 hPa field shades the selected height anomaly and overlays solid black
-height contours every 60 m for the same statistic.
+height contours every 60 m for the same statistic. The 2 m temperature map
+shades −20 to 30 °C and draws colored contours every 5 °C.
 
 The smoke profile has only one lead and two members per ensemble. The viewer
 shows the configured member count next to the full ensemble size. Use the
@@ -105,12 +109,11 @@ in the local data directory or Docker volume.
 | `config/starter.json` | 0–240 h every 6 h | All | Default 10-day viewer dataset |
 | `config/operational.json` | 0–360 h every 6 h, within each stream's horizon | All | Medium-range viewer dataset |
 
-The viewer retains **four latest discovered cycles per model**, plus its
-latest downloaded and compiled fallback cycles if those fall outside the four. Set `retain_cycles`
-to change this. Pruning touches only tracked forecast-cycle directories within
-this profile's dataset, not unrelated files. A long outage can leave old
-partial cycles; they are pruned as new cycles are ingested.
-
+The shipped profiles retain **the eight newest discovered cycles per model**.
+The worker removes older forecast summaries, staged inputs, and catalog rows
+as it discovers new runs. The compact member wind archive has independent
+retention so it remains available for analysis. The run loop uses the
+compiled leads already on disk and fills in as new runs are ingested.
 | Viewer field | Definition | Units |
 | --- | --- | --- |
 | `z500` | 500 hPa geopotential height | m |
@@ -141,7 +144,8 @@ It is calculated on request from the retained height grid.
 the full ensemble. Set, for example, `"members": {"ifs_ens": [0, 1, 2, 3]}`
 for a smaller IFS ensemble. Supported leads are multiples of six. The
 `cycle_hours` option restricts which UTC initialization hours are ingested.
-The optional operational profile uses 360 h for IFS 00/12 UTC and all AIFS cycles.
+The optional operational profile extends the long cycles to 360 h. Its
+IFS 06/18 UTC cycles still use leads through 144 h.
 
 ## Ingestion behavior
 
@@ -197,8 +201,9 @@ data/<selection-id>/
 ```
 
 The selection ID includes the models, fields, leads, members, cycle hours and
-spatial bounds. Changing those choices creates a separate namespace.
-Worker interval, concurrency, and retention changes reuse the same namespace. Override the parent with `--data-root PATH`
+spatial bounds. The upgrade from the earlier IFS 00/12 UTC schedule reuses an
+existing compatible dataset when present. Worker interval, concurrency, and
+retention changes reuse the same namespace. Override the parent with `--data-root PATH`
 **before** the subcommand.
 
 NPZ files can be read with NumPy without requiring xarray/cfgrib:
@@ -277,7 +282,7 @@ still occupy space in the Docker volume.
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q nwp_ingest
-node --test tests/test_viewer_overlays.mjs
+node --test tests/test_viewer_*.mjs
 ```
 
 The included tests cover exact level selection, shared GRIB offsets, IFS 50r1

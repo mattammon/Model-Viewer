@@ -32,11 +32,17 @@ def writer_lock(root):
 
 class Pipeline:
     def __init__(self, config, data_root, http=None):
-        self.config = config
-        self.root = Path(data_root).resolve() / config["selection_id"]
+        self.config = dict(config)
+        data_root = Path(data_root).resolve()
+        self.root = data_root / config["selection_id"]
+        if not (self.root / "catalog.sqlite").is_file() and config.get("previous_selection_id"):
+            previous = data_root / config["previous_selection_id"]
+            if (previous / "catalog.sqlite").is_file():
+                self.root = previous
+                self.config["selection_id"] = previous.name
         self.catalog = Catalog(self.root)
         if not (self.root / "config.json").exists():
-            atomic_json(self.root / "config.json", config)
+            atomic_json(self.root / "config.json", self.config)
         self.http = http or HTTP()
         self.indices = IndexCache(self.http)
 
@@ -195,6 +201,9 @@ class Pipeline:
                         errors.append({"model": name, "error": str(exc)})
                         LOG.error("Discovery %s: %s", name, exc)
             cutoff = datetime.now(timezone.utc) - timedelta(hours=self.config["lookback_hours"])
+            strict = self.config.get("strict_retention", False)
+            if strict:
+                self.catalog.prune(self.config["retain_cycles"], keep_fallback=False)
             self.catalog.export(self.config)
             jobs = [j for j in self.catalog.jobs() if fixed_cycle and j["cycle"] == cycle_id(fixed_cycle)
                     or not fixed_cycle and parse_cycle(j["cycle"]) >= cutoff]
@@ -215,7 +224,8 @@ class Pipeline:
                 except Exception as exc:
                     LOG.exception("Compilation failed")
                     errors.append({"stage": "compilation", "error": str(exc)})
-            self.catalog.prune(self.config["retain_cycles"])
+            if not strict:
+                self.catalog.prune(self.config["retain_cycles"])
             result = self.catalog.export(self.config)
             atomic_json(self.root / "last_sync.json", {"finished_at": utcnow(), "counts": counts, "discovery_errors": [e for e in errors if "model" in e],
                                                        "processing_errors": [e for e in errors if "stage" in e]})

@@ -125,6 +125,10 @@ def validated_bounds(bounds, name, limits=(-180, 180, -90, 90)):
 def selected_cycle_hours(config, model):
     return config.get("cycle_hours", {}).get(model, [0, 6, 12, 18])
 
+def selection_id(selection):
+    return hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def load_config(path):
     config = json.loads(Path(path).read_text())
     for name in config["models"]:
@@ -152,6 +156,8 @@ def load_config(path):
         raise ValueError("workers must be 1..16; poll_seconds must be >=60")
     if type(config["retain_cycles"]) is not int or config["retain_cycles"] < 1:
         raise ValueError("retain_cycles must be a positive integer")
+    if type(config.get("strict_retention", False)) is not bool:
+        raise ValueError("strict_retention must be true or false")
     # Fields and member selections define an independent catalog namespace.
     selection = {k: config.get(k) for k in ("fields", "members", "leads", "models")}
     if "bounds" in config:
@@ -171,7 +177,11 @@ def load_config(path):
                     or any(type(hour) is not int or hour not in (0, 6, 12, 18) for hour in hours)):
                 raise ValueError(f"Invalid cycle_hours for {name}")
         selection["cycle_hours"] = {name: sorted(set(hours)) for name, hours in cycle_hours.items()}
-    config["selection_id"] = hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()[:12]
+    config["selection_id"] = selection_id(selection)
+    if "member_wind_bounds" in config and "ifs_ens" in config["models"] and "cycle_hours" not in config:
+        # Previous shipped profiles limited IFS to 00/12 UTC. The existing
+        # grids, products, and archives are compatible with all four cycles.
+        config["previous_selection_id"] = selection_id({**selection, "cycle_hours": {"ifs_ens": [0, 12]}})
     return config
 
 
