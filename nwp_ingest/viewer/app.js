@@ -1,7 +1,7 @@
 import { ForecastMap } from "./map.js";
 
 const WIND_SPEED = {unit: "m/s", ticks: [0, 6, 12, 18, 24, 30], spread: 12, colors: ["#26354e", "#355a84", "#388c9e", "#5cbd8a", "#d1cc63", "#f0a348", "#d75350", "#974068"]};
-const WIND_DIRECTION = {unit: "° from", ticks: [0, 90, 180, 270, 360], tickLabels: ["N", "E", "S", "W", "N"], colors: ["#8855b6", "#405bc1", "#2ea0af", "#57ae61", "#ebc95f", "#df7947", "#b64875", "#8855b6"]};
+const WIND_DIRECTION = {unit: "° from", spread: 180, ticks: [0, 90, 180, 270, 360], tickLabels: ["N", "E", "S", "W", "N"], colors: ["#8855b6", "#405bc1", "#2ea0af", "#57ae61", "#ebc95f", "#df7947", "#b64875", "#8855b6"]};
 const FIELDS = {
   t2m: {label: "2 m temperature", unit: "°C", ticks: [-60, -40, -20, 0, 20, 40], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
   t850: {label: "850 hPa temperature", unit: "°C", ticks: [-45, -30, -15, 0, 15, 30], convert: value => value - 273.15, spread: 12, colors: ["#5e2a8d", "#27429d", "#4a8ddd", "#94cdd5", "#b8d486", "#e2c45c", "#ed853e", "#c44b48", "#862d50"]},
@@ -75,11 +75,20 @@ function usableLeads() {
 function productOptions(model) {
   if (!model) return [];
   if (!model.ensemble) return [["deterministic", "Deterministic"]];
-  const options = Object.entries(PRODUCTS).filter(([key]) =>
-    state.field.startsWith("wd") ? key === "mean" : state.field !== "z500_anom" || key !== "spread");
-  if (state.field.startsWith("wd")) options[0][1] = "Ensemble circular mean";
-  for (const member of model.configured_members || []) {
-    options.push(["member-" + member, member === 0 ? "Control member" : "Member " + String(member).padStart(2, "0")]);
+  const summaryOnly = Boolean(state.catalog?.member_wind_bounds);
+  const direction = state.field.startsWith("wd");
+  const options = Object.entries(PRODUCTS).filter(([key]) => {
+    if (direction && !summaryOnly) return key === "mean";
+    return state.field !== "z500_anom" || key !== "spread";
+  });
+  if (direction) {
+    options[0][1] = "Ensemble circular mean";
+    if (summaryOnly) options[1][1] = "Circular standard deviation";
+  }
+  if (!summaryOnly) {
+    for (const member of model.configured_members || []) {
+      options.push(["member-" + member, member === 0 ? "Control member" : "Member " + String(member).padStart(2, "0")]);
+    }
   }
   return options;
 }
@@ -102,7 +111,7 @@ function scaleFor(field, product) {
     const ticks = [0, .25, .5, .75, 1].map(n => n * def.spread);
     return {
       label: def.label + " spread",
-      unit: def.unit === "°C" ? "K" : def.unit,
+      unit: def.unit === "°C" ? "K" : def.unit === "° from" ? "°" : def.unit,
       ticks,
       min: 0,
       max: def.spread,

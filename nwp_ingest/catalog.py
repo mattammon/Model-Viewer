@@ -61,9 +61,9 @@ class Catalog:
             db.executemany("INSERT OR IGNORE INTO jobs(model,cycle,lead,member,updated) VALUES(?,?,?,?,?)",
                            [(model, cycle, lead, m, utcnow()) for lead in leads for m in members])
 
-    def jobs(self, model=None, cycle=None):
+    def jobs(self, model=None, cycle=None, lead=None):
         query, args = "SELECT * FROM jobs WHERE 1=1", []
-        for key, value in (("model", model), ("cycle", cycle)):
+        for key, value in (("model", model), ("cycle", cycle), ("lead", lead)):
             if value is not None:
                 query += f" AND {key}=?"
                 args.append(value)
@@ -103,6 +103,7 @@ class Catalog:
                 keep.add(ready[0])
             for cycle in set(ordered) - keep:
                 parse_cycle(cycle)  # Validate the tracked path component before removal.
+                # The member_winds archive is retained independently of viewer cycles.
                 for folder in ("raw", "normalized", "compiled"):
                     path = self.root / folder / name / cycle
                     if path.exists():
@@ -130,7 +131,15 @@ class Catalog:
                 if lead_states[(*key, lead)]:
                     g["complete_leads"].append(lead)
             g["download_complete"] = g["complete"] == g["expected"]
-            g["compiled_leads"] = sorted(int(p.stem[1:]) for p in (self.root / "compiled" / key[0] / key[1]).glob("f*.npz"))
+            compiled = self.root / "compiled" / key[0] / key[1]
+            if "member_wind_bounds" in config:
+                archive = self.root / "member_winds" / key[0] / key[1]
+                g["compiled_leads"] = [lead for lead in g["complete_leads"]
+                                       if (compiled / f"f{lead:03d}.npz").is_file()
+                                       and (compiled / f"f{lead:03d}.json").is_file()
+                                       and (archive / f"f{lead:03d}.npz").is_file()]
+            else:
+                g["compiled_leads"] = sorted(int(p.stem[1:]) for p in compiled.glob("f*.npz"))
             g["status"] = "complete" if g["download_complete"] and set(g["compiled_leads"]) == set(g["leads"]) else "partial"
         models = []
         for name in config["models"]:
@@ -147,5 +156,7 @@ class Catalog:
                   "attribution": "ECMWF open data: CC BY 4.0. Contains modified Copernicus/ECMWF information where applicable. NOAA/NCEP forecasts."}
         if "bounds" in config:
             result["bounds"] = config["bounds"]
+        if "member_wind_bounds" in config:
+            result["member_wind_bounds"] = config["member_wind_bounds"]
         atomic_json(self.root / "catalog.json", result)
         return result

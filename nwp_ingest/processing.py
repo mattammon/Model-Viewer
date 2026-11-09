@@ -4,6 +4,7 @@ from datetime import timedelta
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 import tempfile
 from .catalog import atomic_json, sha256
@@ -149,6 +150,31 @@ def circular_mean(stack, tile_rows=32):
     return result
 
 
+
+def direction_statistics(stack, tile_rows=32):
+    """Circular spread and quantiles ordered by signed distance from the mean."""
+    import numpy as np
+
+    means = circular_mean(stack, tile_rows)
+    result = {key: np.full_like(means, np.nan) for key in ("spread", "p10", "p50", "p90")}
+    result["mean"] = means
+    for start in range(0, len(means), tile_rows):
+        tile = slice(start, start + tile_rows)
+        block = stack[:, tile]
+        mean = means[tile]
+        good = np.isfinite(mean) & np.isfinite(block).all(axis=0)
+        angles = block[:, good].astype("float64")
+        if not angles.size:
+            continue
+        radians = np.deg2rad(angles)
+        resultant = np.abs(np.exp(1j * radians).mean(axis=0)).clip(1e-12, 1)
+        result["spread"][tile][good] = np.rad2deg(np.sqrt(-2 * np.log(resultant)))
+        offsets = (angles - mean[good] + 180) % 360 - 180
+        quantiles = np.quantile(offsets, [0.1, 0.5, 0.9], axis=0, method="linear")
+        for key, values in zip(("p10", "p50", "p90"), quantiles):
+            result[key][tile][good] = (values + mean[good]) % 360
+    return result
+
 def statistics(stack, tile_rows=32):
     """Bound memory by slicing a disk-backed (member, latitude, longitude) array."""
     import numpy as np
@@ -170,73 +196,145 @@ def statistics(stack, tile_rows=32):
     return result
 
 
+def group_leads(jobs):
+    groups = defaultdict(list)
+    for job in jobs:
+        groups[(job["model"], job["cycle"], job["lead"])].append(job)
+    return groups
+
+
+def lead_paths(catalog, config, key):
+    name, cycle, lead = key
+    filename = Path(name) / cycle / f"f{lead:03d}.npz"
+    archive = catalog.root / "member_winds" / filename if "member_wind_bounds" in config else None
+    return catalog.root / "compiled" / filename, archive
+
+
+def lead_fingerprint(config, jobs):
+    fingerprint = {"members": [j["member"] for j in jobs], "input_sha256": [j["sha256"] for j in jobs],
+                   "fields": config["fields"], "version": PROCESSING_VERSION}
+    if "member_wind_bounds" in config:
+        fingerprint["member_wind_bounds"] = config["member_wind_bounds"]
+    return fingerprint
+
+
+def lead_is_published(catalog, config, key, jobs):
+    if any(j["status"] != "complete" for j in jobs):
+        return False
+    output, archive = lead_paths(catalog, config, key)
+    try:
+        info = json.loads(output.with_suffix(".json").read_text())
+        if info["fingerprint"] != lead_fingerprint(config, jobs):
+            return False
+        if archive is None:
+            return output.is_file()
+        return (output.stat().st_size == info["size"] and archive.stat().st_size == info["member_winds_size"]
+                and sha256(archive) == info["member_winds_sha256"])
+    except (FileNotFoundError, ValueError, KeyError):
+        return False
+
+
+def discard_member_staging(catalog, key):
+    name, cycle, lead = key
+    stage = catalog.root / "normalized" / name / cycle / f"f{lead:03d}"
+    if stage.exists():
+        shutil.rmtree(stage)
+
+
+def compile_lead(catalog, config, key, jobs):
+    import numpy as np
+
+    name, cycle, lead = key
+    expected = selected_members(config, MODELS[name])
+    jobs = sorted(jobs, key=lambda job: job["member"])
+    if [j["member"] for j in jobs] != expected or any(j["status"] != "complete" for j in jobs):
+        return False
+    output, archive = lead_paths(catalog, config, key)
+    if lead_is_published(catalog, config, key, jobs):
+        if archive is not None:
+            discard_member_staging(catalog, key)
+        return False
+    paths = []
+    for job in jobs:
+        if not catalog.valid(job):
+            catalog.update(job, status="pending", error="Integrity check failed before compilation")
+            break
+        raw = catalog.root / job["path"]
+        if "bounds" in config:
+            paths.append(raw)
+        else:
+            target = catalog.root / "normalized" / name / cycle / f"f{lead:03d}" / f"m{job['member']:02d}.npz"
+            normalize(raw, target, job, config["fields"])
+            paths.append(target)
+    if len(paths) != len(jobs):
+        return False
+    with np.load(paths[0]) as first:
+        lat, lon = first["latitude"], first["longitude"]
+        names = [n for n in first.files if n not in ("latitude", "longitude")]
+    arrays = {"latitude": lat, "longitude": lon}
+    valid_time = (parse_cycle(cycle) + timedelta(hours=lead)).isoformat()
+    if archive is not None:
+        west, east, south, north = config["member_wind_bounds"]
+        rows = np.flatnonzero((lat >= south) & (lat <= north))
+        columns = np.flatnonzero((lon >= west) & (lon <= east))
+        if not len(rows) or not len(columns):
+            raise ValueError("No grid points in the member wind archive bounds")
+        winds = {"latitude": lat[rows], "longitude": lon[columns], "member": np.asarray(expected),
+                 "model": name, "cycle": cycle, "lead_hours": lead, "valid_time": valid_time}
+    for field in names:
+        if not MODELS[name].ensemble:
+            with np.load(paths[0]) as first:
+                arrays[field] = first[field]
+            continue
+        # Temporary memory map avoids loading all members and variables together.
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output.parent, prefix=".ensemble-") as temp:
+            stack = np.lib.format.open_memmap(Path(temp) / "stack.npy", mode="w+", dtype="float32", shape=(len(paths), len(lat), len(lon)))
+            try:
+                for i, path in enumerate(paths):
+                    with np.load(path) as member:
+                        if not np.array_equal(lat, member["latitude"]) or not np.array_equal(lon, member["longitude"]):
+                            raise ValueError("Ensemble members have different grids")
+                        stack[i] = member[field]
+                if field.startswith("wd"):
+                    stats = direction_statistics(stack) if archive is not None else {"mean": circular_mean(stack)}
+                else:
+                    stats = statistics(stack)
+                if archive is not None:
+                    stats.pop("member_count", None)
+                for stat, values in stats.items():
+                    arrays[f"{field}__{stat}"] = values
+                if archive is not None and field in ("ws10", "ws100"):
+                    winds[field] = stack[:, rows[:, None], columns]
+            finally:
+                del stack
+    info = output.with_suffix(".json")
+    if archive is not None:
+        # The compiled sidecar is the publication marker and is committed last.
+        info.unlink(missing_ok=True)
+        atomic_npz(archive, winds)
+    atomic_npz(output, arrays)
+    metadata = {"fingerprint": lead_fingerprint(config, jobs), "model": name, "cycle": cycle, "lead": lead,
+                "valid_time": valid_time, "ensemble": MODELS[name].ensemble, "members": expected,
+                "nominal_ensemble_size": MODELS[name].size,
+                "control_source": "oper/fc (also the deterministic product)" if ifs_control_is_oper(MODELS[name], parse_cycle(cycle), 0) else "separate ensemble control" if MODELS[name].ensemble else None,
+                "full_ensemble": len(expected) == MODELS[name].size,
+                "spread_ddof": 0, "quantile_method": "linear",
+                "wind_speed_method": "speed calculated per member before statistics",
+                "wind_direction_method": "meteorological direction from; circular mean of defined member directions",
+                "units": product_fields(config), "sha256": sha256(output)}
+    if archive is not None:
+        metadata.update(size=output.stat().st_size, member_winds_size=archive.stat().st_size,
+                        member_winds_sha256=sha256(archive))
+        metadata["wind_direction_method"] += ". Spread is circular standard deviation. Quantiles use signed departures from the circular mean, wrapped to degrees."
+    atomic_json(info, metadata)
+    if archive is not None:
+        discard_member_staging(catalog, key)
+    LOG.info("Compiled %s %s f%03d (%s members)", name, cycle, lead, len(paths))
+    return True
+
+
 def compile_available(catalog, config):
     require_processing()
-    import numpy as np
-    groups = defaultdict(list)
-    for job in catalog.jobs():
-        groups[(job["model"], job["cycle"], job["lead"])].append(job)
-    for (name, cycle, lead), jobs in groups.items():
-        if any(j["status"] != "complete" for j in jobs):
-            continue
-        expected = selected_members(config, MODELS[name])
-        if sorted(j["member"] for j in jobs) != expected:
-            continue
-        jobs.sort(key=lambda j: j["member"])
-        output = catalog.root / "compiled" / name / cycle / f"f{lead:03d}.npz"
-        info = output.with_suffix(".json")
-        fingerprint = {"members": expected, "input_sha256": [j["sha256"] for j in jobs], "fields": config["fields"], "version": PROCESSING_VERSION}
-        if output.exists() and info.exists() and json.loads(info.read_text()).get("fingerprint") == fingerprint:
-            continue
-        paths = []
-        for job in jobs:
-            raw = catalog.root / job["path"]
-            if not catalog.valid(job):
-                catalog.update(job, status="pending", error="Integrity check failed before compilation")
-                break
-            if "bounds" in config:
-                paths.append(raw)
-            else:
-                target = catalog.root / "normalized" / name / cycle / f"f{lead:03d}" / f"m{job['member']:02d}.npz"
-                normalize(raw, target, job, config["fields"])
-                paths.append(target)
-        if len(paths) != len(jobs):
-            continue
-        with np.load(paths[0]) as first:
-            lat, lon = first["latitude"], first["longitude"]
-            names = [n for n in first.files if n not in ("latitude", "longitude")]
-        arrays = {"latitude": lat, "longitude": lon}
-        for field in names:
-            if not MODELS[name].ensemble:
-                with np.load(paths[0]) as first:
-                    arrays[field] = first[field]
-                continue
-            # Temporary memory map avoids loading all members and variables together.
-            output.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(dir=output.parent, prefix=".ensemble-") as temp:
-                stack = np.lib.format.open_memmap(Path(temp) / "stack.npy", mode="w+", dtype="float32", shape=(len(paths), len(lat), len(lon)))
-                try:
-                    for i, path in enumerate(paths):
-                        with np.load(path) as member:
-                            if not np.array_equal(lat, member["latitude"]) or not np.array_equal(lon, member["longitude"]):
-                                raise ValueError("Ensemble members have different grids")
-                            stack[i] = member[field]
-                    if field.startswith("wd"):
-                        arrays[f"{field}__mean"] = circular_mean(stack)
-                    else:
-                        for stat, values in statistics(stack).items():
-                            arrays[f"{field}__{stat}"] = values
-                finally:
-                    del stack
-        atomic_npz(output, arrays)
-        atomic_json(info, {"fingerprint": fingerprint, "model": name, "cycle": cycle, "lead": lead,
-                          "valid_time": (parse_cycle(cycle) + timedelta(hours=lead)).isoformat(),
-                          "ensemble": MODELS[name].ensemble, "members": expected,
-                          "nominal_ensemble_size": MODELS[name].size,
-                          "control_source": "oper/fc (also the deterministic product)" if ifs_control_is_oper(MODELS[name], parse_cycle(cycle), 0) else "separate ensemble control" if MODELS[name].ensemble else None,
-                          "full_ensemble": len(expected) == MODELS[name].size,
-                          "spread_ddof": 0, "quantile_method": "linear", "wind_speed_method": "speed calculated per member before statistics",
-                          "wind_direction_method": "meteorological direction from; circular mean of defined member directions",
-                          "units": product_fields(config),
-                          "sha256": sha256(output)})
-        LOG.info("Compiled %s %s f%03d (%s members)", name, cycle, lead, len(paths))
+    for key, jobs in group_leads(catalog.jobs()).items():
+        compile_lead(catalog, config, key, jobs)

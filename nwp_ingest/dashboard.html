@@ -5,7 +5,7 @@
 </style></head><body><main><header><div><div class="eyebrow">Global forecast infrastructure</div><h1>Model Viewer</h1><p>Forecast ingestion, completeness, and compiled products.</p></div><a class="badge" href="/">← Forecast explorer</a></header>
 <div id="error" role="status"></div><div class="row"><span id="updated" class="muted">Connecting to the catalog…</span><button id="refresh">Refresh catalog</button></div>
 <section id="cards" aria-label="Model availability"></section><section class="panel"><h2>Forecast runs</h2><table><thead><tr><th>Model</th><th>Initialization</th><th>Downloaded shards</th><th>Pending / failed</th><th>Compiled leads</th><th>State</th></tr></thead><tbody id="runs"></tbody></table></section>
-<footer>Downloaded grids are preserved. Ensemble controls and operational deterministic runs are separate products. Refreshes every 60 seconds.</footer></main>
+<footer>This page tracks input availability and published forecast leads. Refreshes every 60 seconds.</footer></main>
 <script>
 const el=id=>document.getElementById(id);const node=(tag,text,cls)=>{let n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n};
 async function refresh(){try{const r=await fetch('/api/catalog');if(!r.ok)throw Error('Catalog request failed');const d=await r.json();el('cards').replaceChildren();el('runs').replaceChildren();el('error').textContent='';el('updated').textContent=d.generated_at?'Catalog updated '+new Date(d.generated_at).toUTCString():d.message;

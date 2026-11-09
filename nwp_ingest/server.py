@@ -98,8 +98,13 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Unknown statistic")
         member = query.get("member", [None])[0]
         statistic = stat if MODELS[name].ensemble else "deterministic"
-        if member is None and field.startswith("wd") and stat != "mean":
-            raise ValueError("Wind direction supports the circular mean or an individual member")
+        summary_only = "member_wind_bounds" in self.pipeline.config
+        if summary_only and stat == "member_count":
+            raise ValueError("Member count is not a gridded product in this profile")
+        if member is not None and summary_only:
+            raise ValueError("Member wind speeds are available in the on-disk analysis archive")
+        if member is None and field.startswith("wd") and (stat == "member_count" or not summary_only and stat != "mean"):
+            raise ValueError("Unsupported statistic for wind direction")
         if member is None and field == "z500_anom" and stat in ("spread", "member_count"):
             raise ValueError("Height anomalies support the mean, percentiles or an individual member")
         source_field = "z500" if field == "z500_anom" else field

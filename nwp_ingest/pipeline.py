@@ -8,7 +8,7 @@ from pathlib import Path
 import tempfile
 from .catalog import Catalog, atomic_json, sha256, utcnow
 from .http import HTTP, Missing, validate_grib
-from .models import MODELS, cycles, cycle_id, parse_cycle, selected_members
+from .models import MODELS, cycles, cycle_id, parse_cycle, selected_cycle_hours, selected_members
 from .providers import IndexCache, urls, select_messages
 
 LOG = logging.getLogger(__name__)
@@ -59,10 +59,15 @@ class Pipeline:
     def discover(self, name, fixed_cycle=None):
         model = MODELS[name]
         member = selected_members(self.config, model)[0]
+        hours = selected_cycle_hours(self.config, name)
         if fixed_cycle:
+            if fixed_cycle.hour not in hours:
+                raise ValueError(f"{name} does not use {fixed_cycle.hour:02d} UTC in this profile")
             return fixed_cycle
         failures = []
         for cycle in cycles(lookback_hours=self.config["lookback_hours"]):
+            if cycle.hour not in hours:
+                continue
             try:
                 self.locate(model, cycle, min(self.config["leads"]), member, self.config["fields"])
                 return cycle
@@ -149,6 +154,31 @@ class Pipeline:
             if tmp:
                 tmp.unlink(missing_ok=True)
 
+    def sync_archived_leads(self, jobs, pool, counts, errors):
+        from .processing import compile_lead, discard_member_staging, group_leads, lead_is_published
+
+        groups = group_leads(jobs)
+        # Make shorter forecasts available first, favoring the newest cycle at each lead.
+        ordered = sorted(groups, key=lambda key: (key[2], -parse_cycle(key[1]).timestamp(), key[0]))
+        for key in ordered:
+            members = groups[key]
+            try:
+                if lead_is_published(self.catalog, self.config, key, members):
+                    counts["cached"] += len(members)
+                    discard_member_staging(self.catalog, key)
+                    continue
+                # Share indexes within this lead and release them before the next one.
+                self.indices = IndexCache(self.http)
+                for status in pool.map(self.download, members):
+                    counts[status] += 1
+                if compile_lead(self.catalog, self.config, key, self.catalog.jobs(*key)):
+                    self.catalog.export(self.config)
+            except Exception as exc:
+                name, cycle, lead = key
+                LOG.exception("Processing failed for %s %s f%03d", name, cycle, lead)
+                errors.append({"stage": "compilation", "model_id": name, "cycle": cycle, "lead": lead,
+                               "error": str(exc)})
+
     def sync(self, fixed_cycle=None, process=True):
         self.indices = IndexCache(self.http)
         with writer_lock(self.root):
@@ -169,12 +199,16 @@ class Pipeline:
             jobs = [j for j in self.catalog.jobs() if fixed_cycle and j["cycle"] == cycle_id(fixed_cycle)
                     or not fixed_cycle and parse_cycle(j["cycle"]) >= cutoff]
             counts = {"cached": 0, "downloaded": 0, "pending": 0, "failed": 0}
+            archive_leads = process and "member_wind_bounds" in self.config
             with ThreadPoolExecutor(max_workers=self.config["workers"]) as pool:
-                futures = [pool.submit(self.download, j) for j in jobs]
-                for future in as_completed(futures):
-                    counts[future.result()] += 1
-            result = self.catalog.export(self.config)
-            if process:
+                if archive_leads:
+                    self.sync_archived_leads(jobs, pool, counts, errors)
+                else:
+                    futures = [pool.submit(self.download, j) for j in jobs]
+                    for future in as_completed(futures):
+                        counts[future.result()] += 1
+            if process and not archive_leads:
+                self.catalog.export(self.config)
                 from .processing import compile_available
                 try:
                     compile_available(self.catalog, self.config)

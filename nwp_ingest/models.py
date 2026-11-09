@@ -110,6 +110,21 @@ def cycles(now=None, lookback_hours=48):
     return [start - timedelta(hours=h) for h in range(0, lookback_hours + 1, 6)]
 
 
+
+def validated_bounds(bounds, name, limits=(-180, 180, -90, 90)):
+    if (not isinstance(bounds, list) or len(bounds) != 4
+            or any(type(value) not in (int, float) or not math.isfinite(value) for value in bounds)):
+        raise ValueError(f"{name} must be [west, east, south, north] in degrees")
+    west, east, south, north = bounds
+    w, e, s, n = limits
+    if not (w <= west < east <= e and s <= south < north <= n):
+        raise ValueError(f"{name} must be ordered and within its domain")
+    return [float(value) for value in bounds]
+
+
+def selected_cycle_hours(config, model):
+    return config.get("cycle_hours", {}).get(model, [0, 6, 12, 18])
+
 def load_config(path):
     config = json.loads(Path(path).read_text())
     for name in config["models"]:
@@ -140,14 +155,22 @@ def load_config(path):
     # Fields and member selections define an independent catalog namespace.
     selection = {k: config.get(k) for k in ("fields", "members", "leads", "models")}
     if "bounds" in config:
-        bounds = config["bounds"]
-        if (not isinstance(bounds, list) or len(bounds) != 4
-                or any(type(value) not in (int, float) or not math.isfinite(value) for value in bounds)):
-            raise ValueError("bounds must be [west, east, south, north] in degrees")
-        west, east, south, north = bounds
-        if not (-180 <= west < east <= 180 and -90 <= south < north <= 90):
-            raise ValueError("bounds must be ordered and within longitude/latitude limits")
-        selection["bounds"] = [float(value) for value in bounds]
+        selection["bounds"] = validated_bounds(config["bounds"], "bounds")
+    if "member_wind_bounds" in config:
+        if "bounds" not in config or any(not MODELS[name].ensemble for name in config["models"]):
+            raise ValueError("member_wind_bounds requires a regional ensemble dataset")
+        if not {"u10", "v10", "u100", "v100"} <= set(config["fields"]):
+            raise ValueError("member_wind_bounds requires the 10 m and 100 m wind components")
+        selection["member_wind_bounds"] = validated_bounds(config["member_wind_bounds"], "member_wind_bounds", config["bounds"])
+    if "cycle_hours" in config:
+        cycle_hours = config["cycle_hours"]
+        if not isinstance(cycle_hours, dict) or not cycle_hours.keys() <= set(config["models"]):
+            raise ValueError("cycle_hours must map configured models to UTC initialization hours")
+        for name, hours in cycle_hours.items():
+            if (not isinstance(hours, list) or not hours
+                    or any(type(hour) is not int or hour not in (0, 6, 12, 18) for hour in hours)):
+                raise ValueError(f"Invalid cycle_hours for {name}")
+        selection["cycle_hours"] = {name: sorted(set(hours)) for name, hours in cycle_hours.items()}
     config["selection_id"] = hashlib.sha256(json.dumps(selection, sort_keys=True).encode()).hexdigest()[:12]
     return config
 
